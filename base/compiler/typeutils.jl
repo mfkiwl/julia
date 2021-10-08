@@ -171,7 +171,7 @@ end
 # N.B.: typename maps type equivalence classes to a single value
 @latticeop args function typename_static(@nospecialize(t))::AbstractLattice
     t isa Const && return _typename(t.val)
-    t isa Conditional && return NativeType(Bool.name)
+    isConditional(t) && return NativeType(Bool.name)
     t = unwrap_unionall(widenconst(t))
     return isType(t) ? _typename(t.parameters[1]) : NativeType(Core.TypeName)
 end

@@ -1,15 +1,15 @@
 # This file is a part of Julia. License is MIT: https://julialang.org/license
 
 # tests for Core.Compiler correctness and precision
-import Core.Compiler: Const, Conditional, ⊑, ReturnNode, GotoIfNot
+import Core.Compiler: Const, Conditional, ⊑, ReturnNode, GotoIfNot, TypeLattice
 isdispatchelem(@nospecialize x) = !isa(x, Type) || Core.Compiler.isdispatchelem(x)
 
 using Random, Core.IR
 using InteractiveUtils: code_llvm
 
 # HACK
-Base.:(==)(a::Core.Compiler.TypeLattice, b::Type) = Core.Compiler.unwraptype(a) == b
-Base.:(==)(a::Type, b::Core.Compiler.TypeLattice) = a == Core.Compiler.unwraptype(b)
+Base.:(==)(a::TypeLattice, b::Type) = Core.Compiler.unwraptype(a) == b
+Base.:(==)(a::Type, b::TypeLattice) = a == Core.Compiler.unwraptype(b)
 
 f39082(x::Vararg{T}) where {T <: Number} = x[1]
 let ast = only(code_typed(f39082, Tuple{Vararg{Rational}}))[1]
@@ -634,7 +634,7 @@ for (codetype, all_ssa) in Any[
         notconst(e)
         typ = code.ssavaluetypes[i]
         typ isa Core.Compiler.MaybeUndef && (typ = typ.typ)
-        @test isa(typ, Type) || isa(typ, Const) || isa(typ, Conditional) || typ
+        @test isa(typ, Type) || isa(typ, Const) || isa(typ, TypeLattice)
     end
     test_inferred_static(codetype, all_ssa)
 end
@@ -1418,16 +1418,18 @@ let egal_tfunc
         @test egal_tfunc(c, Any) === Bool
     end
     let c = Conditional(Core.SlotNumber(0), Union{}, Const(Union{})) # === Const(false)
-        @test egal_tfunc(c, Const(false)) === Conditional(c.var, c.elsetype, Union{})
-        @test egal_tfunc(c, Const(true)) === Conditional(c.var, Union{}, c.elsetype)
+        cnd = c.conditional
+        @test egal_tfunc(c, Const(false)) === Conditional(cnd.var, cnd.elsetype, Union{})
+        @test egal_tfunc(c, Const(true)) === Conditional(cnd.var, Union{}, cnd.elsetype)
         @test egal_tfunc(c, Const(nothing)) === Const(false)
         @test egal_tfunc(c, Int) === Const(false)
         @test egal_tfunc(c, Bool) === Bool
         @test egal_tfunc(c, Any) === Bool
     end
     let c = Conditional(Core.SlotNumber(0), Const(Union{}), Union{}) # === Const(true)
-        @test egal_tfunc(c, Const(false)) === Conditional(c.var, Union{}, c.vtype)
-        @test egal_tfunc(c, Const(true)) === Conditional(c.var, c.vtype, Union{})
+        cnd = c.conditional
+        @test egal_tfunc(c, Const(false)) === Conditional(cnd.var, Union{}, cnd.vtype)
+        @test egal_tfunc(c, Const(true)) === Conditional(cnd.var, cnd.vtype, Union{})
         @test egal_tfunc(c, Const(nothing)) === Const(false)
         @test egal_tfunc(c, Int) === Const(false)
         @test egal_tfunc(c, Bool) === Bool

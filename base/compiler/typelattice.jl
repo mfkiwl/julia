@@ -19,13 +19,65 @@ This lattice property assumes the following invariants:
 const Fields = Vector{Any} # TODO Vector{TypeLattice}
 const _TOP_FIELDS = Fields()
 
+"""
+    cnd = (x::TypeLattice).conditional
+    cnd::ConditionalInfo
+
+The lattice property that comes along with `Bool`.
+It keeps some information about how this `Bool` value was created in order to enable a
+limited amount of type constraint back-propagation.
+In particular, if we branch on an object that has this lattice property `cnd::ConditionalInfo`,
+then we may assume that in the "then" branch, the type of `cnd.var::SlotNumber` will be
+limited by `cnd.vtype` and in the "else" branch, it will be limited by `cnd.elsetype`.
+Example:
+```
+cond = isa(x::Union{Int, String}, Int) # ::TypeLattice(..., ConditionalInfo(x, Int, String), ...)
+if cond
+   ... # x::Int
+else
+   ... # x::String
+end
+```
+"""
+struct ConditionalInfo
+    var::SlotNumber
+    vtype    # TODO ::TypeLattice
+    elsetype # TODO ::TypeLattice
+    function ConditionalInfo(var::SlotNumber, @nospecialize(vtype), @nospecialize(elsetype))
+        return new(var, vtype, elsetype)
+    end
+end
+
+"""
+    cnd = (x::TypeLattice).conditional
+    cnd::InterConditionalInfo
+
+Similar to `ConditionalInfo`, but conveys inter-procedural constraints imposed on call arguments.
+This is separate from `ConditionalInfo` to catch logic errors: the lattice property is
+`InterConditionalInfo` while processing a call, then `ConditionalInfo` everywhere else.
+Thus `ConditionalInfo` and `InterConditionalInfo` should not appear in the same context --
+their usages are disjoint -- though we define the lattice for `InterConditionalInfo`.
+"""
+struct InterConditionalInfo
+    slot::Int
+    vtype    # TODO ::TypeLattice
+    elsetype # TODO ::TypeLattice
+    function InterConditionalInfo(slot::Int, @nospecialize(vtype), @nospecialize(elsetype))
+        return new(slot, vtype, elsetype)
+    end
+end
+const AnyConditionalInfo = Union{ConditionalInfo,InterConditionalInfo}
+const _TOP_CONDITIONAL_INFO = ConditionalInfo(SlotNumber(0), Any, Any)
+
 struct TypeLattice <: _AbstractLattice
     typ::Type
     # elements are other type lattice members
     fields::Fields
+    conditional::AnyConditionalInfo
 
     function TypeLattice(@nospecialize(typ);
-                         fields::Fields = _TOP_FIELDS)
+                         fields::Fields = _TOP_FIELDS,
+                         conditional::AnyConditionalInfo = _TOP_CONDITIONAL_INFO)
         # @assert !(typ isa TypeLattice) "you wrote bad code, look back at yourself"
         if isa(typ, TypeLattice)
             return typ
@@ -33,18 +85,18 @@ struct TypeLattice <: _AbstractLattice
         elseif isa(typ, CompilerTypes)
             return typ
         end
-        return new(widenconst(typ)::Type, fields)
+        return new(widenconst(typ)::Type, fields, conditional)
     end
 end
 
 NativeType(@nospecialize typ) = TypeLattice(typ::Type)
-
 # NOTE once we pack all extended lattice types into `TypeLattice`, we don't need this `unwraptype`:
 # - `unwraptype`: unwrap `NativeType` to Julia type
 # - `widenconst`: unwrap any extended type lattice to Julia type
 unwraptype(@nospecialize t) = t
 function unwraptype(t::TypeLattice)
     isPartialStruct(t) && return t
+    (isConditional(t) || isInterConditional(t)) && return t
     return t.typ
 end
 
@@ -53,7 +105,7 @@ function PartialStruct(@nospecialize(typ), fields::Fields)
     typ = typ::DataType
     @assert !ismutabletype(typ) "invalid PartialStruct formed"
     for x in fields
-        @assert !isa(x, Conditional) "invalid PartialStruct formed"
+        @assert !isConditional(x) "invalid PartialStruct formed"
     end
     return TypeLattice(typ; fields)
 end
@@ -61,7 +113,29 @@ istupletype(@nospecialize typ) = isa(typ, DataType) && typ.name.name === :Tuple
 isPartialStruct(@nospecialize typ) = false
 isPartialStruct(typ::TypeLattice)  = length(typ.fields) ≠ 0
 
-# N.B.: Const/InterConditional are defined in Core, to allow them to be used
+# TODO do some assertions ?
+function Conditional(var::SlotNumber, @nospecialize(vtype), @nospecialize(elsetype))
+    conditional = ConditionalInfo(var, vtype, elsetype)
+    return TypeLattice(Bool; conditional)
+end
+function InterConditional(slot::Int, @nospecialize(vtype), @nospecialize(elsetype))
+    conditional = InterConditionalInfo(slot, vtype, elsetype)
+    return TypeLattice(Bool; conditional)
+end
+isConditional(@nospecialize typ)      = false
+isConditional(typ::TypeLattice)       = isa(typ.conditional, ConditionalInfo) && typ.conditional !== _TOP_CONDITIONAL_INFO
+isInterConditional(@nospecialize typ) = false
+isInterConditional(typ::TypeLattice)  = isa(typ.conditional, InterConditionalInfo)
+isAnyConditional(@nospecialize typ)   = false
+isAnyConditional(typ::TypeLattice)    = isConditional(typ) || isInterConditional(typ)
+# access to the `x.conditional` field with improved type instability where
+# `isConditional(x)` or `isInterConditional(x)` hold
+# TODO once https://github.com/JuliaLang/julia/pull/41199 is merged,
+# all usages of this function can be simply replaced with `x.conditional`
+@inline conditional(x::TypeLattice) = x.conditional::ConditionalInfo
+@inline interconditional(x::TypeLattice) = x.conditional::InterConditionalInfo
+
+# N.B.: Const is defined in Core, to allow them to be used
 # inside the global code cache.
 #
 # # The type of a value might be constant
@@ -69,44 +143,6 @@ isPartialStruct(typ::TypeLattice)  = length(typ.fields) ≠ 0
 #     val
 # end
 import Core: Const
-
-# The type of this value might be Bool.
-# However, to enable a limited amount of back-propagation,
-# we also keep some information about how this Bool value was created.
-# In particular, if you branch on this value, then may assume that in
-# the true branch, the type of `var` will be limited by `vtype` and in
-# the false branch, it will be limited by `elsetype`. Example:
-# ```
-# cond = isa(x::Union{Int, Float}, Int)::Conditional(x, Int, Float)
-# if cond
-#    # May assume x is `Int` now
-# else
-#    # May assume x is `Float` now
-# end
-# ```
-struct Conditional <: _AbstractLattice
-    var::SlotNumber
-    vtype
-    elsetype
-    function Conditional(
-                var,
-                @nospecialize(vtype),
-                @nospecialize(nottype))
-        return new(var, vtype, nottype)
-    end
-end
-
-# # Similar to `Conditional`, but conveys inter-procedural constraints imposed on call arguments.
-# # This is separate from `Conditional` to catch logic errors: the lattice element name is InterConditional
-# # while processing a call, then Conditional everywhere else. Thus InterConditional does not appear in
-# # CompilerTypes—these type's usages are disjoint—though we define the lattice for InterConditional.
-# struct InterConditional
-#     slot::Int
-#     vtype
-#     elsetype
-# end
-import Core: InterConditional
-const AnyConditional = Union{Conditional,InterConditional}
 
 struct PartialTypeVar <: _AbstractLattice
     tv::TypeVar
@@ -168,8 +204,6 @@ const NOT_FOUND = NotFound()
 const CompilerTypes = Union{
     MaybeUndef,
     Const,
-    Conditional,
-    InterConditional,
     NotFound,
     PartialTypeVar,
     PartialOpaque,
@@ -193,8 +227,9 @@ x::TypeLattice == y::Type = unwraptype(x) === y
 
 # `Conditional` and `InterConditional` are valid in opposite contexts
 # (i.e. local inference and inter-procedural call), as such they will never be compared
-function issubconditional(a::C, b::C) where {C<:AnyConditional}
+function issubconditional(a::TypeLattice, b::TypeLattice)
     if is_same_conditionals(a, b)
+        a, b = a.conditional, b.conditional
         if a.vtype ⊑ b.vtype
             if a.elsetype ⊑ b.elsetype
                 return true
@@ -204,15 +239,23 @@ function issubconditional(a::C, b::C) where {C<:AnyConditional}
     return false
 end
 
-is_same_conditionals(a::Conditional,      b::Conditional)      = slot_id(a.var) === slot_id(b.var)
-is_same_conditionals(a::InterConditional, b::InterConditional) = a.slot === b.slot
+function is_same_conditionals(a::TypeLattice, b::TypeLattice)
+    if isConditional(a)
+        return is_same_conditionals(conditional(a), conditional(b))
+    else
+        return is_same_conditionals(interconditional(a), interconditional(b))
+    end
+end
+is_same_conditionals(a::ConditionalInfo, b::ConditionalInfo) = slot_id(a.var) == slot_id(b.var)
+is_same_conditionals(a::InterConditionalInfo, b::InterConditionalInfo) = a.slot == b.slot
 
 @latticeop args is_lattice_bool(@nospecialize(typ)) = typ !== ⊥ && typ ⊑ Bool
 
 maybe_extract_const_bool(c::Const) = (val = c.val; isa(val, Bool)) ? val : nothing
-function maybe_extract_const_bool(c::AnyConditional)
-    (c.vtype === Bottom && !(c.elsetype === Bottom)) && return false
-    (c.elsetype === Bottom && !(c.vtype === Bottom)) && return true
+function maybe_extract_const_bool(x::TypeLattice)
+    cnd = x.conditional
+    (cnd.vtype === Bottom && !(cnd.elsetype === Bottom)) && return false
+    (cnd.elsetype === Bottom && !(cnd.vtype === Bottom)) && return true
     return nothing
 end
 maybe_extract_const_bool(@nospecialize c) = nothing
@@ -241,14 +284,14 @@ function ⊑(@nospecialize(a), @nospecialize(b))
     b === Union{} && return false
     @assert !isa(a, TypeVar) "invalid lattice item"
     @assert !isa(b, TypeVar) "invalid lattice item"
-    if isa(a, AnyConditional)
-        if isa(b, AnyConditional)
+    if isAnyConditional(a)
+        if isAnyConditional(b)
             return issubconditional(a, b)
         elseif isa(b, Const) && isa(b.val, Bool)
             return maybe_extract_const_bool(a) === b.val
         end
         a = Bool
-    elseif isa(b, AnyConditional)
+    elseif isAnyConditional(b)
         return false
     end
     if isPartialStruct(a)
@@ -373,14 +416,19 @@ end
 @inline schanged(@nospecialize(n), @nospecialize(o)) = (n !== o) && (o === NOT_FOUND || (n !== NOT_FOUND && !issubstate(n::VarState, o::VarState)))
 
 widenconditional(@nospecialize typ) = typ
-function widenconditional(typ::AnyConditional)
-    if typ.vtype === Union{}
-        return Const(false)
-    elseif typ.elsetype === Union{}
-        return Const(true)
-    else
-        return NativeType(Bool)
+function widenconditional(typ::TypeLattice)
+    if isAnyConditional(typ)
+        # TODO form new `TypeLattice` with `_TOP_CONDITIONAL_INFO`
+        cnd = typ.conditional
+        if cnd.vtype === Bottom
+            return Const(false)
+        elseif cnd.elsetype === Bottom
+            return Const(true)
+        else
+            return NativeType(Bool)
+        end
     end
+    return typ
 end
 widenconditional(t::LimitedAccuracy) = error("unhandled LimitedAccuracy")
 
@@ -401,7 +449,7 @@ function stupdate!(state::Nothing, changes::StateUpdate)
             newtype = newst[i]
             if isa(newtype, VarState)
                 newtypetyp = ignorelimited(newtype.typ)
-                if isa(newtypetyp, Conditional) && slot_id(newtypetyp.var) == changeid
+                if isConditional(newtypetyp) && slot_id(conditional(newtypetyp).var) == changeid
                     newtypetyp = widenwrappedconditional(newtype.typ)
                     newst[i] = VarState(newtypetyp, newtype.undef)
                 end
@@ -425,7 +473,7 @@ function stupdate!(state::VarTable, changes::StateUpdate)
         # (unless this change is came from the conditional)
         if !changes.conditional && isa(newtype, VarState)
             newtypetyp = ignorelimited(newtype.typ)
-            if isa(newtypetyp, Conditional) && slot_id(newtypetyp.var) == changeid
+            if isConditional(newtypetyp) && slot_id(conditional(newtypetyp).var) == changeid
                 newtypetyp = widenwrappedconditional(newtype.typ)
                 newtype = VarState(newtypetyp, newtype.undef)
             end
@@ -464,7 +512,7 @@ function stupdate1!(state::VarTable, change::StateUpdate)
             oldtype = state[i]
             if isa(oldtype, VarState)
                 oldtypetyp = ignorelimited(oldtype.typ)
-                if isa(oldtypetyp, Conditional) && slot_id(oldtypetyp.var) == changeid
+                if isConditional(oldtypetyp) && slot_id(conditional(oldtypetyp).var) == changeid
                     oldtypetyp = widenconditional(oldtypetyp)
                     if oldtype.typ isa LimitedAccuracy
                         oldtypetyp = LimitedAccuracy(oldtypetyp, (oldtype.typ::LimitedAccuracy).causes)

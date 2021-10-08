@@ -223,7 +223,7 @@ function ifelse_tfunc(@nospecialize(cnd), @nospecialize(x), @nospecialize(y))
         else
             return Bottom
         end
-    elseif isa(cnd, Conditional)
+    elseif isConditional(cnd)
         # optimized (if applicable) in abstract_call
     elseif !(Bool ⊑ cnd)
         return Bottom
@@ -235,12 +235,14 @@ add_tfunc(ifelse, 3, 3, ifelse_tfunc, 1)
 function egal_tfunc(@nospecialize(x), @nospecialize(y))
     xx = widenconditional(x)
     yy = widenconditional(y)
-    if isa(x, Conditional) && isa(yy, Const)
-        yy.val === false && return Conditional(x.var, x.elsetype, x.vtype)
+    if isConditional(x) && isa(yy, Const)
+        cnd = conditional(x)
+        yy.val === false && return Conditional(cnd.var, cnd.elsetype, cnd.vtype)
         yy.val === true && return x
         return Const(false)
-    elseif isa(y, Conditional) && isa(xx, Const)
-        xx.val === false && return Conditional(y.var, y.elsetype, y.vtype)
+    elseif isConditional(y) && isa(xx, Const)
+        cnd = conditional(y)
+        xx.val === false && return Conditional(cnd.var, cnd.elsetype, cnd.vtype)
         xx.val === true && return y
         return Const(false)
     elseif isa(xx, Const) && isa(yy, Const)
@@ -322,7 +324,7 @@ function sizeof_nothrow(@nospecialize(x))
         if !isa(x.val, Type) || x.val === DataType
             return true
         end
-    elseif isa(x, Conditional)
+    elseif isConditional(x)
         return true
     end
     xu = unwrap_unionall(x)
@@ -372,7 +374,7 @@ function _const_sizeof(@nospecialize(x))
 end
 function sizeof_tfunc(@nospecialize(x),)
     isa(x, Const) && return _const_sizeof(x.val)
-    isa(x, Conditional) && return _const_sizeof(Bool)
+    isConditional(x) && return _const_sizeof(Bool)
     isconstType(x) && return _const_sizeof(x.parameters[1])
     xu = unwrap_unionall(x)
     if isa(xu, Union)
@@ -402,7 +404,7 @@ end
 add_tfunc(Core.sizeof, 1, 1, sizeof_tfunc, 1)
 function nfields_tfunc(@nospecialize(x))
     isa(x, Const) && return Const(nfields(x.val))
-    isa(x, Conditional) && return Const(0)
+    isConditional(x) && return Const(0)
     x = unwrap_unionall(widenconst(x))
     isconstType(x) && return Const(nfields(x.parameters[1]))
     if isa(x, DataType) && !isabstracttype(x)
@@ -596,7 +598,7 @@ function isa_tfunc(@nospecialize(v), @nospecialize(tt))
                 return Const(true)
             end
         else
-            if isa(v, Const) || isa(v, Conditional)
+            if isa(v, Const) || isConditional(v)
                 # this and the `isdispatchelem` below test for knowledge of a
                 # leaftype appearing on the LHS (ensuring the isa is precise)
                 return Const(false)
@@ -780,7 +782,7 @@ function getfield_tfunc(@nospecialize(s00), @nospecialize(name))
     if isa(s, Union)
         return tmerge(getfield_tfunc(rewrap(s.a,s00), name),
                       getfield_tfunc(rewrap(s.b,s00), name))
-    elseif isa(s, Conditional)
+    elseif isConditional(s)
         return Bottom # Bool has no fields
     elseif isa(s, Const) || isconstType(s)
         if !isa(s, Const)
@@ -880,7 +882,7 @@ function getfield_tfunc(@nospecialize(s00), @nospecialize(name))
     if isempty(ftypes)
         return Bottom
     end
-    if isa(name, Conditional)
+    if isConditional(name)
         return Bottom # can't index fields with Bool
     end
     if !isa(name, Const)
@@ -1065,7 +1067,7 @@ function fieldtype_tfunc(@nospecialize(s0), @nospecialize(name))
     if isa(s0, Const) && !(isa(s0.val, DataType) || isa(s0.val, UnionAll) || isa(s0.val, Union))
         return Bottom
     end
-    if (s0 isa Type && s0 == Type{Union{}}) || isa(s0, Conditional)
+    if (s0 isa Type && s0 == Type{Union{}}) || isConditional(s0)
         return Bottom
     end
 
@@ -1415,7 +1417,7 @@ add_tfunc(apply_type, 1, INT_INF, apply_type_tfunc, 10)
 
 function has_struct_const_info(@nospecialize x)
     isa(x, PartialTypeVar) && return true
-    isa(x, Conditional) && return true
+    isConditional(x) && return true
     return has_nontrivial_const_info(x)
 end
 

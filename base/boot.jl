@@ -423,7 +423,6 @@ eval(Core, :(CodeInstance(mi::MethodInstance, @nospecialize(rettype), @nospecial
                     mi, rettype, inferred_const, inferred, const_flags, min_world, max_world)))
 eval(Core, :(Const(@nospecialize(v)) = $(Expr(:new, :Const, :v))))
 eval(Core, :(PartialOpaque(@nospecialize(typ), @nospecialize(env), isva::Bool, parent::MethodInstance, source::Method) = $(Expr(:new, :PartialOpaque, :typ, :env, :isva, :parent, :source))))
-eval(Core, :(InterConditional(slot::Int, @nospecialize(vtype), @nospecialize(elsetype)) = $(Expr(:new, :InterConditional, :slot, :vtype, :elsetype))))
 eval(Core, :(MethodMatch(@nospecialize(spec_types), sparams::SimpleVector, method::Method, fully_covers::Bool) =
     $(Expr(:new, :MethodMatch, :spec_types, :sparams, :method, :fully_covers))))
 

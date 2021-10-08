@@ -327,26 +327,29 @@ function _tmerge(@nospecialize(typea), @nospecialize(typeb))
             isa(typeb, MaybeUndef) ? typeb.typ : typeb))
     end
     # type-lattice for Conditional wrapper
-    if isa(typea, Conditional) && isa(typeb, Const)
+    if isConditional(typea) && isa(typeb, Const)
+        cnd = conditional(typea)
         if typeb.val === true
-            typeb = Conditional(typea.var, Any, Union{})
+            typeb = Conditional(cnd.var, Any, Union{})
         elseif typeb.val === false
-            typeb = Conditional(typea.var, Union{}, Any)
+            typeb = Conditional(cnd.var, Union{}, Any)
         end
     end
-    if isa(typeb, Conditional) && isa(typea, Const)
+    if isConditional(typeb) && isa(typea, Const)
+        cnd = conditional(typeb)
         if typea.val === true
-            typea = Conditional(typeb.var, Any, Union{})
+            typea = Conditional(cnd.var, Any, Union{})
         elseif typea.val === false
-            typea = Conditional(typeb.var, Union{}, Any)
+            typea = Conditional(cnd.var, Union{}, Any)
         end
     end
-    if isa(typea, Conditional) && isa(typeb, Conditional)
-        if is_same_conditionals(typea, typeb)
-            vtype = tmerge(typea.vtype, typeb.vtype)
-            elsetype = tmerge(typea.elsetype, typeb.elsetype)
+    if isConditional(typea) && isConditional(typeb)
+        cnda, cndb = conditional(typea), conditional(typeb)
+        if is_same_conditionals(cnda, cndb)
+            vtype = tmerge(cnda.vtype, cndb.vtype)
+            elsetype = tmerge(cnda.elsetype, cndb.elsetype)
             if vtype != elsetype
-                return Conditional(typea.var, vtype, elsetype)
+                return Conditional(cnda.var, vtype, elsetype)
             end
         end
         val = maybe_extract_const_bool(typea)
@@ -356,26 +359,29 @@ function _tmerge(@nospecialize(typea), @nospecialize(typeb))
         return Bool
     end
     # type-lattice for InterConditional wrapper, InterConditional will never be merged with Conditional
-    if isa(typea, InterConditional) && isa(typeb, Const)
+    if isInterConditional(typea) && isa(typeb, Const)
+        cnd = interconditional(typea)
         if typeb.val === true
-            typeb = InterConditional(typea.slot, Any, Union{})
+            typeb = InterConditional(cnd.slot, Any, Union{})
         elseif typeb.val === false
-            typeb = InterConditional(typea.slot, Union{}, Any)
+            typeb = InterConditional(cnd.slot, Union{}, Any)
         end
     end
-    if isa(typeb, InterConditional) && isa(typea, Const)
+    if isInterConditional(typeb) && isa(typea, Const)
+        cnd = interconditional(typeb)
         if typea.val === true
-            typea = InterConditional(typeb.slot, Any, Union{})
+            typea = InterConditional(cnd.slot, Any, Union{})
         elseif typea.val === false
-            typea = InterConditional(typeb.slot, Union{}, Any)
+            typea = InterConditional(cnd.slot, Union{}, Any)
         end
     end
-    if isa(typea, InterConditional) && isa(typeb, InterConditional)
-        if is_same_conditionals(typea, typeb)
-            vtype = tmerge(typea.vtype, typeb.vtype)
-            elsetype = tmerge(typea.elsetype, typeb.elsetype)
+    if isInterConditional(typea) && isInterConditional(typeb)
+        cnda, cndb = interconditional(typea), interconditional(typeb)
+        if is_same_conditionals(cnda, cndb)
+            vtype = tmerge(cnda.vtype, cndb.vtype)
+            elsetype = tmerge(cnda.elsetype, cndb.elsetype)
             if vtype != elsetype
-                return InterConditional(typea.slot, vtype, elsetype)
+                return InterConditional(cnda.slot, vtype, elsetype)
             end
         end
         val = maybe_extract_const_bool(typea)
@@ -621,7 +627,7 @@ function tmeet(@nospecialize(v), @nospecialize(t))
             end
         end
         return tuple_tfunc(new_fields)
-    elseif isa(v, Conditional)
+    elseif isConditional(v)
         if !(Bool <: t)
             return Bottom
         end
