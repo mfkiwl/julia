@@ -616,7 +616,7 @@ end
         return rtype !== ⊥
     end
     # Could be improved to `Const` or a more precise wrapper
-    return isa(rtype, PartialStruct) || isa(rtype, InterConditional)
+    return isPartialStruct(rtype) || isa(rtype, InterConditional)
 end
 
 # see if propagating constants may be worthwhile
@@ -632,7 +632,7 @@ end
 
 function is_const_prop_profitable_arg(@nospecialize(arg))
     # have new information from argtypes that wasn't available from the signature
-    if isa(arg, PartialStruct)
+    if isPartialStruct(arg)
         for b in arg.fields
             isconstType(b) && return true
             is_const_prop_profitable_arg(b) && return true
@@ -652,7 +652,7 @@ end
 function is_allconst(argtypes::Vector{AbstractLattice})
     for a in argtypes
         a = widenconditional(a)
-        if !isa(a, Const) && !isconstType(widenconst(a)) && !isa(a, PartialStruct) && !isa(a, PartialOpaque)
+        if !isa(a, Const) && !isconstType(widenconst(a)) && !isPartialStruct(a) && !isa(a, PartialOpaque)
             return false
         end
     end
@@ -767,7 +767,7 @@ end
 # Union of Tuples of the same length is converted to Tuple of Unions.
 # returns an array of types
 @latticeop args function precise_container_type(interp::AbstractInterpreter, @nospecialize(itft), @nospecialize(typ), sv::InferenceState)
-    if isa(typ, PartialStruct) && typ.typ.name === Tuple.name
+    if isPartialStruct(typ) && typ.typ.name === Tuple.name
         return typ.fields, nothing
     end
 
@@ -1566,9 +1566,9 @@ end
             if isa(at, Const) && isa(at.val, Tuple) && n == length(at.val::Tuple) &&
                 let ty = ty; _all(i->getfield(at.val::Tuple, i) isa fieldtype(ty, i), 1:n); end
                 t = Const(ccall(:jl_new_structt, Any, (Any, Any), ty, at.val))
-            elseif isa(at, PartialStruct) && at ⊑ Tuple && n == length(at.fields::Vector{Any}) &&
-                let ty = ty, at = at; _all(i->(at.fields::Vector{Any})[i] ⊑ fieldtype(ty, i), 1:n); end
-                t = PartialStruct(ty, at.fields::Vector{Any})
+            elseif isPartialStruct(at) && at ⊑ Tuple && n == length(at.fields) &&
+                let ty = ty, at = at; _all(i->(at.fields)[i] ⊑ fieldtype(ty, i), 1:n); end
+                t = PartialStruct(ty, at.fields)
             end
         end
     elseif ehead === :new_opaque_closure
@@ -1721,8 +1721,7 @@ end
     isa(rt, Conditional) && return InterConditional(slot_id(rt.var), rt.vtype, rt.elsetype)
     isa(rt, InterConditional) && return rt
     isa(rt, Const) && return rt
-    isa(rt, TypeLattice) && return rt
-    if isa(rt, PartialStruct)
+    if isPartialStruct(rt)
         fields = copy(rt.fields)
         haveconst = false
         for i in 1:length(fields)
@@ -1738,6 +1737,7 @@ end
     if isa(rt, PartialOpaque)
         return rt # XXX: this case was missed in #39512
     end
+    isa(rt, TypeLattice) && return rt
     return TypeLattice(widenconst(rt))
 end
 

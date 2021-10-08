@@ -627,7 +627,7 @@ function rewrite_apply_exprargs!(ir::IRCode, todo::Vector{Pair{Int, Any}}, idx::
         def_type = atypes[i]
         thisarginfo = arginfos[i-arg_start]
         if thisarginfo === nothing
-            if def_type isa PartialStruct
+            if isPartialStruct(def_type)
                 # def_type.typ <: Tuple is assumed
                 def_atypes = AbstractLattice[TypeLattice(t) for t in def_type.fields]
             else

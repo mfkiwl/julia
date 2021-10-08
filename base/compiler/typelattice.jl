@@ -4,9 +4,28 @@
 # structs/constants #
 #####################
 
+"""
+    fields = (x::TypeLattice).fields
+    fields::Fields
+
+Keeps field information about a partially constant-folded `struct`.
+When fields of a `struct` are fully known we just form `Const`, but even when some of the
+fields can't be folded inference will try to keep constant information of other foled fields
+with this lattice property.
+This lattice property assumes the following invariants:
+- `immutabletype(x.typ)`: since inference doesn't reason about memory-effects of object fields
+- `x.typ` is concrete or `Tuple` type: the lattice assumes `Const ⊑ PartialStruct ⊑ concrete type ⊑ abstract type`
+"""
+const Fields = Vector{Any} # TODO Vector{TypeLattice}
+const _TOP_FIELDS = Fields()
+
 struct TypeLattice <: _AbstractLattice
     typ::Type
-    function TypeLattice(@nospecialize typ)
+    # elements are other type lattice members
+    fields::Fields
+
+    function TypeLattice(@nospecialize(typ);
+                         fields::Fields = _TOP_FIELDS)
         # @assert !(typ isa TypeLattice) "you wrote bad code, look back at yourself"
         if isa(typ, TypeLattice)
             return typ
@@ -14,7 +33,7 @@ struct TypeLattice <: _AbstractLattice
         elseif isa(typ, CompilerTypes)
             return typ
         end
-        return new(widenconst(typ)::Type)
+        return new(widenconst(typ)::Type, fields)
     end
 end
 
@@ -23,21 +42,33 @@ NativeType(@nospecialize typ) = TypeLattice(typ::Type)
 # NOTE once we pack all extended lattice types into `TypeLattice`, we don't need this `unwraptype`:
 # - `unwraptype`: unwrap `NativeType` to Julia type
 # - `widenconst`: unwrap any extended type lattice to Julia type
-@inline unwraptype(@nospecialize t) = isa(t, TypeLattice) ? t.typ : t
+unwraptype(@nospecialize t) = t
+function unwraptype(t::TypeLattice)
+    isPartialStruct(t) && return t
+    return t.typ
+end
 
-# N.B.: Const/PartialStruct/InterConditional are defined in Core, to allow them to be used
+function PartialStruct(@nospecialize(typ), fields::Fields)
+    @assert (isconcretetype(typ) || istupletype(typ)) "invalid PartialStruct formed"
+    typ = typ::DataType
+    @assert !ismutabletype(typ) "invalid PartialStruct formed"
+    for x in fields
+        @assert !isa(x, Conditional) "invalid PartialStruct formed"
+    end
+    return TypeLattice(typ; fields)
+end
+istupletype(@nospecialize typ) = isa(typ, DataType) && typ.name.name === :Tuple
+isPartialStruct(@nospecialize typ) = false
+isPartialStruct(typ::TypeLattice)  = length(typ.fields) ≠ 0
+
+# N.B.: Const/InterConditional are defined in Core, to allow them to be used
 # inside the global code cache.
 #
 # # The type of a value might be constant
 # struct Const
 #     val
 # end
-#
-# struct PartialStruct
-#     typ
-#     fields::Vector{Any} # elements are other type lattice members
-# end
-import Core: Const, PartialStruct
+import Core: Const
 
 # The type of this value might be Bool.
 # However, to enable a limited amount of back-propagation,
@@ -140,7 +171,6 @@ const CompilerTypes = Union{
     Conditional,
     InterConditional,
     NotFound,
-    PartialStruct,
     PartialTypeVar,
     PartialOpaque,
     LimitedAccuracy,
@@ -221,8 +251,8 @@ function ⊑(@nospecialize(a), @nospecialize(b))
     elseif isa(b, AnyConditional)
         return false
     end
-    if isa(a, PartialStruct)
-        if isa(b, PartialStruct)
+    if isPartialStruct(a)
+        if isPartialStruct(b)
             if !(length(a.fields) == length(b.fields) && a.typ <: b.typ)
                 return false
             end
@@ -233,7 +263,7 @@ function ⊑(@nospecialize(a), @nospecialize(b))
             return true
         end
         return isa(b, Type) && a.typ <: b
-    elseif isa(b, PartialStruct)
+    elseif isPartialStruct(b)
         if isa(a, Const)
             nfields(a.val) == length(b.fields) || return false
             widenconst(b).name === widenconst(a).name || return false
@@ -285,8 +315,8 @@ end
 # `a ⊑ b && b ⊑ a` but with extra performance optimizations.
 function is_lattice_equal(@nospecialize(a), @nospecialize(b))
     a === b && return true
-    if isa(a, PartialStruct)
-        isa(b, PartialStruct) || return false
+    if isPartialStruct(a)
+        isPartialStruct(b) || return false
         length(a.fields) == length(b.fields) || return false
         widenconst(a) == widenconst(b) || return false
         for i in 1:length(a.fields)
@@ -294,7 +324,7 @@ function is_lattice_equal(@nospecialize(a), @nospecialize(b))
         end
         return true
     end
-    isa(b, PartialStruct) && return false
+    isPartialStruct(b) && return false
     if a isa Const
         if issingletontype(b)
             return a.val === b.instance
@@ -322,7 +352,6 @@ widenconst(c::AnyConditional) = Bool
 widenconst((; val)::Const) = isa(val, Type) ? Type{val} : typeof(val)
 widenconst(m::MaybeUndef) = widenconst(m.typ)
 widenconst(c::PartialTypeVar) = TypeVar
-widenconst(t::PartialStruct) = t.typ
 widenconst(t::PartialOpaque) = t.typ
 widenconst(t::Type) = t
 widenconst(t::TypeVar) = t

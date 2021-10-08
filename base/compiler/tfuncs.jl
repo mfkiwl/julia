@@ -827,7 +827,7 @@ function getfield_tfunc(@nospecialize(s00), @nospecialize(name))
             end
         end
         s = typeof(sv)
-    elseif isa(s00, PartialStruct)
+    elseif isPartialStruct(s00)
         s = widenconst(s00)
         sty = unwrap_unionall(s)::DataType
         if isa(name, Const)
@@ -836,7 +836,7 @@ function getfield_tfunc(@nospecialize(s00), @nospecialize(name))
                 nv = fieldindex(sty, nv, false)
             end
             if isa(nv, Int) && 1 <= nv <= length(s00.fields)
-                return unwrapva(s00.fields[nv])
+                return unwrapva((s00.fields)[nv])
             end
         end
     end

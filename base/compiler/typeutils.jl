@@ -33,7 +33,7 @@ function hasuniquerep(@nospecialize t)
 end
 
 #= TODO @latticeop args =# function has_nontrivial_const_info(@nospecialize t)
-    isa(t, PartialStruct) && return true
+    isPartialStruct(t) && return true
     isa(t, PartialOpaque) && return true
     isa(t, Const) || return false
     val = t.val

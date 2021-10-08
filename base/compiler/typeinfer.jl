@@ -304,7 +304,7 @@ function CodeInstance(result::InferenceResult, @nospecialize(inferred_result::An
         elseif isconstType(result_type)
             rettype_const = result_type.parameters[1]
             const_flags = 0x2
-        elseif isa(result_type, PartialStruct)
+        elseif isPartialStruct(result_type)
             rettype_const = result_type.fields
             const_flags = 0x2
         elseif isa(result_type, InterConditional)

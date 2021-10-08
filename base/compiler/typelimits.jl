@@ -385,8 +385,8 @@ function _tmerge(@nospecialize(typea), @nospecialize(typeb))
         return Bool
     end
     # type-lattice for Const and PartialStruct wrappers
-    if ((isa(typea, PartialStruct) || isa(typea, Const)) &&
-        (isa(typeb, PartialStruct) || isa(typeb, Const)) &&
+    if ((isPartialStruct(typea) || isa(typea, Const)) &&
+        (isPartialStruct(typeb) || isa(typeb, Const)) &&
         widenconst(typea) === widenconst(typeb))
 
         typea_nfields = nfields_tfunc(typea)
@@ -598,7 +598,7 @@ function tmeet(@nospecialize(v), @nospecialize(t))
             return Bottom
         end
         return v
-    elseif isa(v, PartialStruct)
+    elseif isPartialStruct(v)
         has_free_typevars(t) && return v
         widev = widenconst(v)
         if widev <: t
