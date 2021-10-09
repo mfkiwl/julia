@@ -2521,6 +2521,10 @@ function show(io::IO, typ::CC.TypeLattice)
             i == n || print(io, ", ")
         end
         print(io, "])")
+    elseif CC.isPartialTypeVar(typ)
+        print(io, nameof(CC.PartialTypeVar), '(')
+        show(io, typ.partialtypevar.tv)
+        print(io, ')')
     else
         print(io, nameof(CC.NativeType), '(', CC.widenconst(typ), ')')
     end

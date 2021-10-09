@@ -1342,9 +1342,9 @@ function apply_type_tfunc(@nospecialize(headtypetype), @nospecialize args...)
                    isa(aival, Type) || isa(aival, TypeVar) || valid_tparam(aival) || (istuple && isa(aival, Core.TypeofVararg))
                end
             push!(tparams, aival)
-        elseif isa(ai, PartialTypeVar)
+        elseif isPartialTypeVar(ai)
             canconst = false
-            push!(tparams, ai.tv)
+            push!(tparams, ai.partialtypevar.tv)
         else
             uncertain = true
             # These blocks improve type info but make compilation a bit slower.
@@ -1424,7 +1424,7 @@ end
 add_tfunc(apply_type, 1, INT_INF, apply_type_tfunc, 10)
 
 function has_struct_const_info(@nospecialize x)
-    isa(x, PartialTypeVar) && return true
+    isPartialTypeVar(x) && return true
     isConditional(x) && return true
     return has_nontrivial_const_info(x)
 end

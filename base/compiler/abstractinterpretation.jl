@@ -1187,8 +1187,8 @@ end
             a2 = argtypes[2]
             if isConst(a2)
                 tv = constant(a2)
-            elseif isa(a2, PartialTypeVar)
-                tv = a2.tv
+            elseif isPartialTypeVar(a2)
+                tv = a2.partialtypevar.tv
                 canconst = false
             else
                 return ⊤
@@ -1284,7 +1284,7 @@ function abstract_call_known(interp::AbstractInterpreter, @nospecialize(f),
         elseif la == 3
             ub_var = argtypes[3]
         end
-        return CallMeta(TypeLattice(typevar_tfunc(n, lb_var, ub_var)), false)
+        return CallMeta(typevar_tfunc(n, lb_var, ub_var), false)
     elseif f === UnionAll
         return CallMeta(abstract_call_unionall(argtypes), false)
     elseif f === Tuple && la == 2 && !isconcretetype(widenconst(argtypes[2]))

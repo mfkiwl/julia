@@ -556,7 +556,7 @@ end
 function visit_slot_load!(sl::SlotNumber, vtypes::VarTable, sv::InferenceState, undefs::Array{Bool,1})
     id = slot_id(sl)
     s = vtypes[id]
-    vt = widenconditional(ignorelimited(s.typ))
+    vt = ignorelimited(s.typ)
     if s.undef
         # find used-undef variables
         undefs[id] = true
@@ -611,7 +611,7 @@ function type_annotate!(sv::InferenceState, run_optimizer::Bool)
     ssavaluetypes = src.ssavaluetypes::Vector{AbstractLattice}
     for j = 1:length(ssavaluetypes)
         t = ssavaluetypes[j]
-        ssavaluetypes[j] = t === NOT_FOUND ? ⊥ : widenconditional(t)
+        ssavaluetypes[j] = t === NOT_FOUND ? ⊥ : t
     end
 
     # compute the required type for each slot

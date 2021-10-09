@@ -31,6 +31,12 @@ end
 const AnyConditionalInfo = Union{ConditionalInfo,InterConditionalInfo}
 const _TOP_CONDITIONAL_INFO = ConditionalInfo(SlotNumber(0), Any, Any)
 
+struct PartialTypeVarInfo
+    tv::TypeVar
+    PartialTypeVarInfo(tv::TypeVar) = new(tv)
+end
+const _TOP_PARTIALTYPEVAR_INFO = PartialTypeVarInfo(TypeVar(:⊤))
+
 """
     x::TypeLattice
 
@@ -98,48 +104,55 @@ a partial lattice whose height is infinite.
   - property query: `isConditional(x)` / `isInterConditional(x)` / `isAnyConditional(x)`
   - property retrieval: `conditional(x)` / `interconditional(x)`
   - property widening: `widenconditional(x)`
+
+---
+- `x.partialtypevar :: PartialTypeVarInfo`
+  Tracks an identity of `TypeVar` so that `x` can produce better inference for `UnionAll`
+  construction.
+  By default `x.partialtypevar` is initialized with `_TOP_PARTIALTYPEVAR_INFO` (no information).
+
+  See also:
+  - constructor: `PartialTypeVar(::TypeVar, lb_certain::Bool, ub_certain::Bool)`
+  - property query: `isPartialTypeVar(x)`
+
 ---
 """
 struct TypeLattice <: _AbstractLattice
     typ::Type
+    # COMBAK capitalize these field names ?
     constant::Union{Nothing,Constant}
     fields::Fields
     conditional::AnyConditionalInfo
+    partialtypevar::PartialTypeVarInfo
 
     function TypeLattice(@nospecialize(typ);
-                         constant::Union{Nothing,Constant} = nothing,
-                         fields::Fields = _TOP_FIELDS,
-                         conditional::AnyConditionalInfo = _TOP_CONDITIONAL_INFO)
-        # @assert !(typ isa TypeLattice) "you wrote bad code, look back at yourself"
+                         constant::Union{Nothing,Constant}  = nothing,
+                         fields::Fields                     = _TOP_FIELDS,
+                         conditional::AnyConditionalInfo    = _TOP_CONDITIONAL_INFO,
+                         partialtypevar::PartialTypeVarInfo = _TOP_PARTIALTYPEVAR_INFO,
+                         )
+        # TODO remove these safe-checks
         if isa(typ, TypeLattice)
             return typ
-        # TODO remove these definitions
         elseif isa(typ, CompilerTypes)
             return typ
         end
-        return new(widenconst(typ)::Type, constant, fields, conditional)
+        return new(widenconst(typ)::Type, constant, fields, conditional, partialtypevar)
     end
 end
 
 NativeType(@nospecialize typ) = TypeLattice(typ::Type)
 # NOTE once we pack all extended lattice types into `TypeLattice`, we don't need this `unwraptype`:
-# - `unwraptype`: unwrap `NativeType` to Julia type
-# - `widenconst`: unwrap any extended type lattice to Julia type
-unwraptype(@nospecialize t) = t
-function unwraptype(t::TypeLattice)
-    isConst(t) && return t
-    isPartialStruct(t) && return t
-    (isConditional(t) || isInterConditional(t)) && return t
-    return t.typ
-end
+# - `unwraptype`: unwrap `NativeType` to native Julia type
+# - `widenconst`: unwrap any extended type lattice to native Julia type
+unwraptype(@nospecialize t) = (isa(t, TypeLattice) && t === NativeType(t.typ)) ? t.typ : t
 
 function Const(@nospecialize val)
     typ = isa(val, Type) ? Type{val} : typeof(val)
     constant = Constant(val)
     return TypeLattice(typ; constant)
 end
-isConst(@nospecialize typ) = false
-isConst(typ::TypeLattice)  = typ.constant !== nothing
+isConst(@nospecialize typ) = isa(typ, TypeLattice) && typ.constant !== nothing
 # access to the `x.constant.val` field with improved type instability where `isConst(x)` holds
 # TODO once https://github.com/JuliaLang/julia/pull/41199 is merged,
 # all usages of this function can be simply replaced with `x.constant.val`
@@ -155,8 +168,7 @@ function PartialStruct(@nospecialize(typ), fields::Fields)
     return TypeLattice(typ; fields)
 end
 istupletype(@nospecialize typ) = isa(typ, DataType) && typ.name.name === :Tuple
-isPartialStruct(@nospecialize typ) = false
-isPartialStruct(typ::TypeLattice)  = length(typ.fields) ≠ 0
+isPartialStruct(@nospecialize typ) = isa(typ, TypeLattice) && length(typ.fields) ≠ 0
 
 # TODO do some assertions ?
 function Conditional(var::SlotNumber, @nospecialize(vtype), @nospecialize(elsetype))
@@ -181,12 +193,9 @@ function InterConditional(slot::Int, @nospecialize(vtype), @nospecialize(elsetyp
     conditional = InterConditionalInfo(slot, vtype, elsetype)
     return TypeLattice(Bool; constant, conditional)
 end
-isConditional(@nospecialize typ)      = false
-isConditional(typ::TypeLattice)       = isa(typ.conditional, ConditionalInfo) && typ.conditional !== _TOP_CONDITIONAL_INFO
-isInterConditional(@nospecialize typ) = false
-isInterConditional(typ::TypeLattice)  = isa(typ.conditional, InterConditionalInfo)
-isAnyConditional(@nospecialize typ)   = false
-isAnyConditional(typ::TypeLattice)    = isConditional(typ) || isInterConditional(typ)
+isConditional(@nospecialize typ) = isa(typ, TypeLattice) && isa(typ.conditional, ConditionalInfo) && typ.conditional !== _TOP_CONDITIONAL_INFO
+isInterConditional(@nospecialize typ) = isa(typ, TypeLattice) && isa(typ.conditional, InterConditionalInfo)
+isAnyConditional(@nospecialize typ) = isa(typ, TypeLattice) && (isConditional(typ) || isInterConditional(typ))
 # access to the `x.conditional` field with improved type instability where
 # `isConditional(x)` or `isInterConditional(x)` hold
 # TODO once https://github.com/JuliaLang/julia/pull/41199 is merged,
@@ -194,14 +203,15 @@ isAnyConditional(typ::TypeLattice)    = isConditional(typ) || isInterConditional
 @inline conditional(x::TypeLattice) = x.conditional::ConditionalInfo
 @inline interconditional(x::TypeLattice) = x.conditional::InterConditionalInfo
 
-struct PartialTypeVar <: _AbstractLattice
-    tv::TypeVar
-    # N.B.: Currently unused, but would allow turning something back
-    # into Const, if the bounds are pulled out of this TypeVar
-    lb_certain::Bool
-    ub_certain::Bool
-    PartialTypeVar(tv::TypeVar, lb_certain::Bool, ub_certain::Bool) = new(tv, lb_certain, ub_certain)
+function PartialTypeVar(
+    tv::TypeVar,
+    # N.B.: Currently unused, but could be used to form something like `Constant`
+    # if the bounds are pulled out of this `TypeVar`
+    lb_certain::Bool, ub_certain::Bool)
+    partialtypevar = PartialTypeVarInfo(tv)
+    return TypeLattice(TypeVar; partialtypevar)
 end
+isPartialTypeVar(@nospecialize typ) = isa(typ, TypeLattice) && typ.partialtypevar !== _TOP_PARTIALTYPEVAR_INFO
 
 # Wraps a type and represents that the value may also be undef at this point.
 # (only used in optimize, not abstractinterpret)
@@ -254,7 +264,6 @@ const NOT_FOUND = NotFound()
 const CompilerTypes = Union{
     MaybeUndef,
     NotFound,
-    PartialTypeVar,
     PartialOpaque,
     LimitedAccuracy,
     TypeofVararg,
@@ -399,7 +408,7 @@ function ⊑(@nospecialize(a), @nospecialize(b))
             return a.instance === constant(b)
         end
         return false
-    elseif isa(a, PartialTypeVar) && b === TypeVar
+    elseif isPartialTypeVar(a) && b === TypeVar
         return true
     elseif isa(a, Type) && isa(b, Type)
         return a <: b
@@ -448,7 +457,6 @@ end
 
 widenconst(x::TypeLattice) = x.typ
 widenconst(m::MaybeUndef) = widenconst(m.typ)
-widenconst(c::PartialTypeVar) = TypeVar
 widenconst(t::PartialOpaque) = t.typ
 widenconst(t::Type) = t
 widenconst(t::TypeVar) = t
