@@ -83,7 +83,7 @@ function reset_timings()
     empty!(_timings)
     push!(_timings, Timing(
         # The MethodInstance for ROOT(), and default empty values for other fields.
-        InferenceFrameInfo(ROOTmi, 0x0, AbstractLattice[], AbstractLattice[Core.Const(ROOT)], 1),
+        InferenceFrameInfo(ROOTmi, 0x0, AbstractLattice[], AbstractLattice[Core.Compiler.Const(ROOT)], 1),
         _time_ns()))
     return nothing
 end
@@ -259,11 +259,11 @@ function _typeinf(interp::AbstractInterpreter, frame::InferenceState)
                 # for the `return ...::Const` (which never runs anyway). We should do this
                 # as a post processing step instead.
                 ir_to_codeinf!(opt)
-                if result_type isa Const
-                    caller.src = result_type
+                if isConst(result_type)
+                    caller.src = result_type.constant::Constant
                 else
                     @assert isconstType(result_type)
-                    caller.src = Const(result_type.parameters[1])
+                    caller.src = Constant(result_type.parameters[1])
                 end
             end
             caller.valid_worlds = opt.inlining.et.valid_worlds[]
@@ -289,26 +289,27 @@ function CodeInstance(result::InferenceResult, @nospecialize(inferred_result::An
     local const_flags::Int32
     result_type = result.result
     @assert !(result_type isa LimitedAccuracy)
-    if inferred_result isa Const
+    if isa(inferred_result, Constant)
         # use constant calling convention
         rettype_const = inferred_result.val
         const_flags = 0x3
         inferred_result = nothing
     else
-        if isa(result_type, Const)
-            rettype_const = result_type.val
+        if isInterConditional(result_type)
+            rettype_const = interconditional(result_type)
+            const_flags = 0x2
+        elseif isConst(result_type)
+            rettype_const = constant(result_type)
             const_flags = 0x2
         elseif isa(result_type, PartialOpaque)
             rettype_const = result_type
             const_flags = 0x2
+        # TODO update me once we type `result.result::TypeLattice`
         elseif isconstType(result_type)
             rettype_const = result_type.parameters[1]
             const_flags = 0x2
         elseif isPartialStruct(result_type)
             rettype_const = result_type.fields
-            const_flags = 0x2
-        elseif isInterConditional(result_type)
-            rettype_const = interconditional(result_type)
             const_flags = 0x2
         else
             rettype_const = nothing
@@ -365,7 +366,7 @@ function transform_result_for_cache(interp::AbstractInterpreter, linfo::MethodIn
         inferred_result = maybe_compress_codeinfo(interp, linfo, inferred_result)
     end
     # The global cache can only handle objects that codegen understands
-    if !isa(inferred_result, Union{CodeInfo, Vector{UInt8}, Const})
+    if !isa(inferred_result, Union{CodeInfo, Vector{UInt8}, Constant})
         inferred_result = nothing
     end
     return inferred_result
@@ -673,6 +674,7 @@ function type_annotate!(sv::InferenceState, run_optimizer::Bool)
                 changemap[oldidx] = -1
                 continue
             else
+                # TODO how to deal with this ?
                 body[i] = Const(expr) # annotate that this statement actually is dead
             end
         end

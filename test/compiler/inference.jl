@@ -1,7 +1,9 @@
 # This file is a part of Julia. License is MIT: https://julialang.org/license
 
 # tests for Core.Compiler correctness and precision
-import Core.Compiler: Const, Conditional, ⊑, ReturnNode, GotoIfNot, TypeLattice
+import Core.Compiler: TypeLattice, Const, Conditional, InterConditional, ⊑, tmerge,
+                      Bottom, is_lattice_equal,
+                      ReturnNode, GotoIfNot
 isdispatchelem(@nospecialize x) = !isa(x, Type) || Core.Compiler.isdispatchelem(x)
 
 using Random, Core.IR
@@ -117,20 +119,22 @@ tmerge_test(Tuple{ComplexF64, ComplexF64, ComplexF32}, Tuple{Vararg{Union{Comple
     Tuple{Vararg{Complex}}, false)
 tmerge_test(Tuple{}, Tuple{Complex, Vararg{Union{ComplexF32, ComplexF64}}},
     Tuple{Vararg{Complex}})
-@test Core.Compiler.tmerge(Tuple{}, Union{Nothing, Tuple{ComplexF32, ComplexF32}}) ==
+@test tmerge(Tuple{}, Union{Nothing, Tuple{ComplexF32, ComplexF32}}) ==
     Union{Nothing, Tuple{}, Tuple{ComplexF32, ComplexF32}}
-@test Core.Compiler.tmerge(Tuple{}, Union{Nothing, Tuple{ComplexF32}, Tuple{ComplexF32, ComplexF32}}) ==
+@test tmerge(Tuple{}, Union{Nothing, Tuple{ComplexF32}, Tuple{ComplexF32, ComplexF32}}) ==
     Union{Nothing, Tuple{Vararg{ComplexF32}}}
-@test Core.Compiler.tmerge(Union{Nothing, Tuple{ComplexF32}}, Union{Nothing, Tuple{ComplexF32, ComplexF32}}) ==
+@test tmerge(Union{Nothing, Tuple{ComplexF32}}, Union{Nothing, Tuple{ComplexF32, ComplexF32}}) ==
     Union{Nothing, Tuple{ComplexF32}, Tuple{ComplexF32, ComplexF32}}
-@test Core.Compiler.tmerge(Union{Nothing, Tuple{}, Tuple{ComplexF32}}, Union{Nothing, Tuple{ComplexF32, ComplexF32}}) ==
+@test tmerge(Union{Nothing, Tuple{}, Tuple{ComplexF32}}, Union{Nothing, Tuple{ComplexF32, ComplexF32}}) ==
     Union{Nothing, Tuple{Vararg{ComplexF32}}}
-@test Core.Compiler.tmerge(Vector{Int}, Core.Compiler.tmerge(Vector{String}, Vector{Bool})) ==
+@test tmerge(Vector{Int}, tmerge(Vector{String}, Vector{Bool})) ==
     Union{Vector{Bool}, Vector{Int}, Vector{String}}
-@test Core.Compiler.tmerge(Vector{Int}, Core.Compiler.tmerge(Vector{String}, Union{Vector{Bool}, Vector{Symbol}})) == Vector
-@test Core.Compiler.tmerge(Base.BitIntegerType, Union{}) == Base.BitIntegerType
-@test Core.Compiler.tmerge(Union{}, Base.BitIntegerType) == Base.BitIntegerType
-@test Core.Compiler.tmerge(Core.Compiler.InterConditional(1, Int, Union{}), Core.Compiler.InterConditional(2, String, Union{})) === Core.Compiler.Const(true)
+@test tmerge(Vector{Int}, tmerge(Vector{String}, Union{Vector{Bool}, Vector{Symbol}})) == Vector
+@test tmerge(Base.BitIntegerType, Bottom) == Base.BitIntegerType
+@test tmerge(Bottom, Base.BitIntegerType) == Base.BitIntegerType
+@test is_lattice_equal(tmerge(InterConditional(1, Int, Bottom), InterConditional(1, String, Bottom)), InterConditional(1, Union{Int,String}, Bottom))
+@test tmerge(InterConditional(1, Int, Bottom), InterConditional(2, String, Bottom)) === Const(true)
+@test tmerge(InterConditional(1, Int, Bottom), Const(false)) ⊑ InterConditional(1, Int, Any)
 
 struct SomethingBits
     x::Base.BitIntegerType
@@ -242,7 +246,7 @@ barTuple2() = fooTuple{tuple(:y)}()
 # issue #6050
 @test Core.Compiler.getfield_tfunc(
           Dict{Int64,Tuple{UnitRange{Int64},UnitRange{Int64}}},
-          Core.Compiler.Const(:vals)) == Array{Tuple{UnitRange{Int64},UnitRange{Int64}},1}
+          Const(:vals)) == Array{Tuple{UnitRange{Int64},UnitRange{Int64}},1}
 
 # assert robustness of `getfield_tfunc`
 struct GetfieldRobustness
@@ -634,7 +638,7 @@ for (codetype, all_ssa) in Any[
         notconst(e)
         typ = code.ssavaluetypes[i]
         typ isa Core.Compiler.MaybeUndef && (typ = typ.typ)
-        @test isa(typ, Type) || isa(typ, Const) || isa(typ, TypeLattice)
+        @test isa(typ, Type) || isa(typ, TypeLattice)
     end
     test_inferred_static(codetype, all_ssa)
 end
@@ -1827,7 +1831,7 @@ end
 
     # handle the edge case
     let ts = @eval Module() begin
-            edgecase(_) = $(Core.Compiler.InterConditional(2, Int, Any))
+            edgecase(_) = $(InterConditional(2, Int, Any))
             # create cache
             Base.return_types(edgecase, (Any,))
             Base.return_types((Any,)) do x
@@ -2727,9 +2731,9 @@ const DenseIdx = Union{IntRange,Integer}
 # Non uniformity in expressions with PartialTypeVar
 @test Core.Compiler.:⊑(Core.Compiler.PartialTypeVar(TypeVar(:N), true, true), TypeVar)
 let N = TypeVar(:N)
-    @test Core.Compiler.apply_type_nothrow([Core.Compiler.Const(NTuple),
+    @test Core.Compiler.apply_type_nothrow(Any[Const(NTuple),
         Core.Compiler.PartialTypeVar(N, true, true),
-        Core.Compiler.Const(Any)], Type{Tuple{Vararg{Any,N}}})
+        Const(Any)], Type{Tuple{Vararg{Any,N}}})
 end
 
 # issue #33768
@@ -3272,18 +3276,18 @@ end
 
     # argtypes
     let
-        tunion = switchtupleunion(AbstractLattice[NativeType(Union{Int32,Int64}), Core.Const(nothing)])
+        tunion = switchtupleunion(AbstractLattice[NativeType(Union{Int32,Int64}), Const(nothing)])
         @test length(tunion) == 2
-        @test Any[Int32, Core.Const(nothing)] in tunion
-        @test Any[Int64, Core.Const(nothing)] in tunion
+        @test Any[Int32, Const(nothing)] in tunion
+        @test Any[Int64, Const(nothing)] in tunion
     end
     let
-        tunion = switchtupleunion(AbstractLattice[NativeType(Union{Int32,Int64}), NativeType(Union{Float32,Float64}), Core.Const(nothing)])
+        tunion = switchtupleunion(AbstractLattice[NativeType(Union{Int32,Int64}), NativeType(Union{Float32,Float64}), Const(nothing)])
         @test length(tunion) == 4
-        @test AbstractLattice[NativeType(Int32), NativeType(Float32), Core.Const(nothing)] in tunion
-        @test AbstractLattice[NativeType(Int32), NativeType(Float64), Core.Const(nothing)] in tunion
-        @test AbstractLattice[NativeType(Int64), NativeType(Float32), Core.Const(nothing)] in tunion
-        @test AbstractLattice[NativeType(Int64), NativeType(Float64), Core.Const(nothing)] in tunion
+        @test AbstractLattice[NativeType(Int32), NativeType(Float32), Const(nothing)] in tunion
+        @test AbstractLattice[NativeType(Int32), NativeType(Float64), Const(nothing)] in tunion
+        @test AbstractLattice[NativeType(Int64), NativeType(Float32), Const(nothing)] in tunion
+        @test AbstractLattice[NativeType(Int64), NativeType(Float64), Const(nothing)] in tunion
     end
 end
 

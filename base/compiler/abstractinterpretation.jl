@@ -614,12 +614,10 @@ end
 # more information, we might get a more precise type)
 @latticeop args function is_improvable(@nospecialize(rtype))
     if isa(rtype, TypeLattice)
-        # Could always be improved to Const or PartialStruct, unless we're
-        # already at Bottom
-        return rtype !== ⊥
+        # Could always be improved to Const unless we're already at Bottom
+        return rtype !== ⊥ && !isConst(rtype)
     end
-    # Could be improved to `Const` or a more precise wrapper
-    return isPartialStruct(rtype) || isInterConditional(rtype)
+    return false
 end
 
 # see if propagating constants may be worthwhile
@@ -642,8 +640,8 @@ function is_const_prop_profitable_arg(@nospecialize(arg))
         end
     end
     isa(arg, PartialOpaque) && return true
-    isa(arg, Const) || return true
-    val = arg.val
+    isConst(arg) || return true
+    val = constant(arg)
     # don't consider mutable values or Strings useful constants
     return isa(val, Symbol) || isa(val, Type) || (!isa(val, String) && !ismutable(val))
 end
@@ -655,7 +653,7 @@ end
 function is_allconst(argtypes::Vector{AbstractLattice})
     for a in argtypes
         a = widenconditional(a)
-        if !isa(a, Const) && !isconstType(widenconst(a)) && !isPartialStruct(a) && !isa(a, PartialOpaque)
+        if !isConst(a) && !isconstType(widenconst(a)) && !isPartialStruct(a) && !isa(a, PartialOpaque)
             return false
         end
     end
@@ -774,8 +772,8 @@ end
         return typ.fields, nothing
     end
 
-    if isa(typ, Const)
-        val = typ.val
+    if isConst(typ)
+        val = constant(typ)
         if isa(val, SimpleVector) || isa(val, Tuple)
             return Any[ Const(val[i]) for i in 1:length(val) ], nothing # avoid making a tuple Generator here!
         end
@@ -837,8 +835,8 @@ end
 
 # simulate iteration protocol on container type up to fixpoint
 @latticeop args function abstract_iteration(interp::AbstractInterpreter, @nospecialize(itft), @nospecialize(itertype), sv::InferenceState)
-    if isa(itft, Const)
-        iteratef = itft.val
+    if isConst(itft)
+        iteratef = constant(itft)
     else
         return Any[Vararg{Any}], nothing
     end
@@ -929,7 +927,7 @@ function abstract_apply(interp::AbstractInterpreter, argtypes::Vector{AbstractLa
     (itft === ⊥ || aft === ⊥) && return CallMeta(⊥, false)
     aargtypes = argtype_tail(argtypes, 4)
     aftw = widenconst(aft)
-    if !isa(aft, Const) && !isa(aft, PartialOpaque) && (!isType(aftw) || has_free_typevars(aftw))
+    if !isConst(aft) && !isa(aft, PartialOpaque) && (!isType(aftw) || has_free_typevars(aftw))
         if !isconcretetype(aftw) || (aftw <: Builtin)
             add_remark!(interp, sv, "Core._apply_iterate called on a function of a non-concrete type")
             # bail now, since it seems unlikely that abstract_call will be able to do any better after splitting
@@ -1035,12 +1033,12 @@ is_method_pure(match::MethodMatch) = is_method_pure(match.method, match.spec_typ
 function pure_eval_call(@nospecialize(f), argtypes::Vector{AbstractLattice})
     for i = 2:length(argtypes)
         a = widenconditional(argtypes[i])
-        if !(isa(a, Const) || isconstType(widenconst(a)))
+        if !(isConst(a) || isconstType(widenconst(a)))
             return nothing
         end
     end
 
-    args = Any[ (a = widenconditional(argtypes[i]); isa(a, Const) ? a.val : (widenconst(a)::Type).parameters[1]) for i in 2:length(argtypes) ]
+    args = Any[ (a = widenconditional(argtypes[i]); isConst(a) ? constant(a) : (widenconst(a)::Type).parameters[1]) for i in 2:length(argtypes) ]
     try
         value = Core._apply_pure(f, args)
         return Const(value)
@@ -1078,9 +1076,9 @@ end
             newtyp = widenconditional(typ)
             tx = argtypes[3]
             ty = argtypes[4]
-            if isa(newtyp, Const)
+            if isConst(newtyp)
                 # if `cnd` is constant, we should just respect its constantness to keep inference accuracy
-                return newtyp.val::Bool ? tx : ty
+                return constant(newtyp)::Bool ? tx : ty
             else
                 # try to simulate this as a real conditional (`cnd ? x : y`), so that the penalty for using `ifelse` instead isn't too high
                 a = ssa_def_slot(fargs[3], sv)
@@ -1096,15 +1094,16 @@ end
         end
     end
     rt = builtin_tfunction(interp, f, argtypes[2:end], sv)
-    if (rt === Bool || (isa(rt, Const) && isa(rt.val, Bool))) && isa(fargs, Vector{Any})
+    if (rt === Bool || (isConst(rt) && isa(constant(rt), Bool))) && isa(fargs, Vector{Any})
         # perform very limited back-propagation of type information for `is` and `isa`
+        val = isConst(rt) ? constant(rt)::Bool : nothing
         if f === isa
             a = ssa_def_slot(fargs[2], sv)
             if isa(a, SlotNumber)
                 aty = widenconst(argtypes[2])
-                if rt === Const(false)
+                if val === false
                     return Conditional(a, Bottom, aty)
-                elseif rt === Const(true)
+                elseif val === true
                     return Conditional(a, aty, Bottom)
                 end
                 tty_ub, isexact_tty = instanceof_tfunc(argtypes[3])
@@ -1123,32 +1122,32 @@ end
             aty = unwraptype(argtypes[2])
             bty = unwraptype(argtypes[3])
             # if doing a comparison to a singleton, consider returning a `Conditional` instead
-            if isa(aty, Const) && isa(b, SlotNumber)
-                if rt === Const(false)
+            if isConst(aty) && isa(b, SlotNumber)
+                if val === false
                     aty = Bottom
-                elseif rt === Const(true)
+                elseif val === true
                     bty = Bottom
-                elseif bty isa Type && isdefined(typeof(aty.val), :instance) # can only widen a if it is a singleton
-                    bty = typesubtract(bty, typeof(aty.val), InferenceParams(interp).MAX_UNION_SPLITTING)
+                elseif bty isa Type && isdefined(typeof(constant(aty)), :instance) # can only widen a if it is a singleton
+                    bty = typesubtract(bty, typeof(constant(aty)), InferenceParams(interp).MAX_UNION_SPLITTING)
                 end
                 return Conditional(b, aty, bty)
             end
-            if isa(bty, Const) && isa(a, SlotNumber)
-                if rt === Const(false)
+            if isConst(bty) && isa(a, SlotNumber)
+                if val === false
                     bty = Bottom
-                elseif rt === Const(true)
+                elseif val === true
                     aty = Bottom
-                elseif aty isa Type && isdefined(typeof(bty.val), :instance) # same for b
-                    aty = typesubtract(aty, typeof(bty.val), InferenceParams(interp).MAX_UNION_SPLITTING)
+                elseif aty isa Type && isdefined(typeof(constant(bty)), :instance) # same for b
+                    aty = typesubtract(aty, typeof(constant(bty)), InferenceParams(interp).MAX_UNION_SPLITTING)
                 end
                 return Conditional(a, bty, aty)
             end
             # narrow the lattice slightly (noting the dependency on one of the slots), to promote more effective smerge
             if isa(b, SlotNumber)
-                return Conditional(b, rt === Const(false) ? Bottom : bty, rt === Const(true) ? Bottom : bty)
+                return Conditional(b, val === false ? Bottom : bty, val === true ? Bottom : bty)
             end
             if isa(a, SlotNumber)
-                return Conditional(a, rt === Const(false) ? Bottom : aty, rt === Const(true) ? Bottom : aty)
+                return Conditional(a, val === false ? Bottom : aty, val === true ? Bottom : aty)
             end
         elseif f === Core.Compiler.not_int
             aty = argtypes[2]
@@ -1156,9 +1155,9 @@ end
                 cnd = conditional(aty)
                 ifty = cnd.elsetype
                 elty = cnd.vtype
-                if rt === Const(false)
+                if val === false
                     ifty = Bottom
-                elseif rt === Const(true)
+                elseif val === true
                     elty = Bottom
                 end
                 return Conditional(cnd.var, ifty, elty)
@@ -1173,8 +1172,8 @@ end
         canconst = true
         a3 = argtypes[3]
         a3 = unwraptype(a3)
-        if isa(a3, Const)
-            body = a3.val
+        if isConst(a3)
+            body = constant(a3)
         elseif isType(a3)
             body = a3.parameters[1]
             canconst = false
@@ -1186,8 +1185,8 @@ end
         end
         if has_free_typevars(body)
             a2 = argtypes[2]
-            if isa(a2, Const)
-                tv = a2.val
+            if isConst(a2)
+                tv = constant(a2)
             elseif isa(a2, PartialTypeVar)
                 tv = a2.tv
                 canconst = false
@@ -1306,8 +1305,8 @@ function abstract_call_known(interp::AbstractInterpreter, @nospecialize(f),
         if isConditional(rty)
             cnd = conditional(rty)
             return CallMeta(Conditional(cnd.var, cnd.elsetype, cnd.vtype), false) # swap if-else
-        elseif isa(rty, Const)
-            return CallMeta(Const(rty.val === false), MethodResultPure())
+        elseif isConst(rty)
+            return CallMeta(Const(constant(rty) === false), MethodResultPure())
         end
         return CallMeta(TypeLattice(rty), false)
     elseif la == 3 && istopfunction(f, :(>:))
@@ -1321,13 +1320,13 @@ function abstract_call_known(interp::AbstractInterpreter, @nospecialize(f),
         argtypes = AbstractLattice[NativeType(typeof(<:)), argtypes[3], argtypes[2]]
         return CallMeta(abstract_call_known(interp, <:, fargs, argtypes, sv).rt, false)
     elseif la == 2 &&
-           (a2 = argtypes[2]; isa(a2, Const)) && (svecval = a2.val; isa(svecval, SimpleVector)) &&
+           (a2 = argtypes[2]; isConst(a2)) && (svecval = constant(a2); isa(svecval, SimpleVector)) &&
            istopfunction(f, :length)
         # mark length(::SimpleVector) as @pure
         return CallMeta(Const(length(svecval)), MethodResultPure())
     elseif la == 3 &&
-           (a2 = argtypes[2]; isa(a2, Const)) && (svecval = a2.val; isa(svecval, SimpleVector)) &&
-           (a3 = argtypes[3]; isa(a3, Const)) && (idx = a3.val; isa(idx, Int)) &&
+           (a2 = argtypes[2]; isConst(a2)) && (svecval = constant(a2); isa(svecval, SimpleVector)) &&
+           (a3 = argtypes[3]; isConst(a3)) && (idx = constant(a3); isa(idx, Int)) &&
            istopfunction(f, :getindex)
         # mark getindex(::SimpleVector, i::Int) as @pure
         if 1 <= idx <= length(svecval) && isassigned(svecval, idx)
@@ -1544,13 +1543,14 @@ end
                     t = ⊥
                     allconst = anyconst = false
                     break
-                elseif at isa Const
-                    if !(at.val isa fieldtype(ty, i - 1))
+                elseif isConst(at)
+                    val = constant(at)
+                    if !(val isa fieldtype(ty, i - 1))
                         t = ⊥
                         allconst = anyconst = false
                         break
                     end
-                    args[i-1] = at.val
+                    args[i-1] = val
                 else
                     allconst = false
                 end
@@ -1570,9 +1570,9 @@ end
         if length(e.args) == 2 && isconcretetype(ty) && !ismutabletype(ty)
             at = abstract_eval_value(interp, e.args[2], vtypes, sv)
             n = fieldcount(ty)
-            if isa(at, Const) && isa(at.val, Tuple) && n == length(at.val::Tuple) &&
-                let ty = ty; _all(i->getfield(at.val::Tuple, i) isa fieldtype(ty, i), 1:n); end
-                t = Const(ccall(:jl_new_structt, Any, (Any, Any), ty, at.val))
+            if isConst(at) && isa(constant(at), Tuple) && n == length(constant(at)::Tuple) &&
+                let ty = ty; _all(i->getfield(constant(at)::Tuple, i) isa fieldtype(ty, i), 1:n); end
+                t = Const(ccall(:jl_new_structt, Any, (Any, Any), ty, constant(at)))
             elseif isPartialStruct(at) && at ⊑ Tuple && n == length(at.fields) &&
                 let ty = ty, at = at; _all(i->(at.fields)[i] ⊑ fieldtype(ty, i), 1:n); end
                 t = PartialStruct(ty, at.fields)
@@ -1611,7 +1611,7 @@ end
         t = NativeType((length(e.args) == 1) ? Any : Nothing)
     elseif ehead === :copyast
         t = abstract_eval_value(interp, e.args[1], vtypes, sv)
-        if t isa Const && t.val isa Expr
+        if isConst(t) && constant(t) isa Expr
             # `copyast` makes copies of Exprs
             t = NativeType(Expr)
         end
@@ -1639,7 +1639,7 @@ end
             n = sym.args[1]::Int
             if 1 <= n <= length(sv.sptypes)
                 spty = sv.sptypes[n]
-                if isa(spty, Const)
+                if isConst(spty)
                     t = Const(true)
                 end
             end
@@ -1654,7 +1654,7 @@ end
         t = Const(ty.instance)
     end
     if !isempty(sv.pclimitations)
-        if t isa Const || t === ⊥
+        if isConst(t) || t === ⊥
             empty!(sv.pclimitations)
         else
             t = LimitedAccuracy(t, sv.pclimitations)
@@ -1732,7 +1732,7 @@ end
         return InterConditional(slot_id(cnd.var), cnd.vtype, cnd.elsetype)
     end
     isInterConditional(rt) && return rt
-    isa(rt, Const) && return rt
+    isConst(rt) && return rt
     if isPartialStruct(rt)
         fields = copy(rt.fields)
         haveconst = false
@@ -1799,7 +1799,7 @@ function typeinf_local(interp::AbstractInterpreter, frame::InferenceState)
                     empty!(frame.pclimitations)
                     break
                 end
-                if !(isa(condt, Const) || isConditional(condt)) && isa(condx, SlotNumber)
+                if !(isConst(condt) || isConditional(condt)) && isa(condx, SlotNumber)
                     # if this non-`Conditional` object is a slot, we form and propagate
                     # the conditional constraint on it
                     condt = Conditional(condx, Const(true), Const(false))
@@ -1841,13 +1841,13 @@ function typeinf_local(interp::AbstractInterpreter, frame::InferenceState)
                 rt = abstract_eval_value(interp, stmt.val, changes, frame)
                 rt = widenreturn(rt, bestguess, nslots, slottypes, changes)
                 # narrow representation of bestguess slightly to prepare for tmerge with rt
-                if isInterConditional(rt) && bestguess isa Const
+                if isInterConditional(rt) && isConst(bestguess)
                     let cnd = interconditional(rt)
                         slot_id = cnd.slot
                         old_id_type = unwraptype(slottypes[slot_id])
-                        if bestguess.val === true && cnd.elsetype !== Bottom
+                        if constant(bestguess) === true && cnd.elsetype !== Bottom
                             bestguess = InterConditional(slot_id, old_id_type, Bottom)
-                        elseif bestguess.val === false && cnd.vtype !== Bottom
+                        elseif constant(bestguess) === false && cnd.vtype !== Bottom
                             bestguess = InterConditional(slot_id, Bottom, old_id_type)
                         end
                     end
@@ -1996,8 +1996,8 @@ end
     new = widenconditional(state[slot_id].typ) # avoid nested conditional
     if new ⊑ old && !(old ⊑ new)
         new = unwraptype(new)
-        if isa(rt, Const)
-            val = rt.val
+        if isConst(rt)
+            val = constant(rt)
             if val === true
                 return InterConditional(slot_id, new, Bottom)
             elseif val === false

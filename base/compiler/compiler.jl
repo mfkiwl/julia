@@ -112,10 +112,10 @@ something(x::Any, y...) = x
 ############
 
 # TODO remove me in the future, this is just to check the coverage of the overhaul
-import Core: Const, PartialOpaque, TypeofVararg
+import Core: PartialOpaque, TypeofVararg
 abstract type _AbstractLattice end
 const AbstractLattice = Union{
-    Const, PartialOpaque, TypeofVararg,
+    PartialOpaque, TypeofVararg,
     _AbstractLattice}
 
 macro latticeop(mode, def)

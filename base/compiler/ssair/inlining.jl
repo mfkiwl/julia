@@ -632,8 +632,8 @@ function rewrite_apply_exprargs!(ir::IRCode, todo::Vector{Pair{Int, Any}}, idx::
                 def_atypes = AbstractLattice[TypeLattice(t) for t in def_type.fields]
             else
                 def_atypes = AbstractLattice[]
-                if isa(def_type, Const) # && isa(def_type.val, Union{Tuple, SimpleVector}) is implied
-                    for p in def_type.val
+                if isConst(def_type) # && isa(constant(def_type), Union{Tuple, SimpleVector}) is implied
+                    for p in constant(def_type)
                         push!(def_atypes, Const(p))
                     end
                 else
@@ -657,8 +657,8 @@ function rewrite_apply_exprargs!(ir::IRCode, todo::Vector{Pair{Int, Any}}, idx::
             # now push flattened types into new_atypes and getfield exprs into new_argexprs
             for j in 1:length(def_atypes)
                 def_atype = def_atypes[j]
-                if isa(def_atype, Const) && is_inlineable_constant(def_atype.val)
-                    new_argexpr = quoted(def_atype.val)
+                if isConst(def_atype) && is_inlineable_constant(constant(def_atype))
+                    new_argexpr = quoted(constant(def_atype))
                 else
                     new_call = Expr(:call, GlobalRef(Core, :getfield), def, j)
                     new_argexpr = insert_node!(ir, idx, NewInstruction(new_call, def_atype))
@@ -735,11 +735,12 @@ function resolve_todo(todo::InliningTodo, state::InliningState, flag::UInt8)
     isconst, src = false, nothing
     if isa(match, InferenceResult)
         inferred_src = match.src
-        if isa(inferred_src, Const)
-            if !is_inlineable_constant(inferred_src.val)
+        if isa(inferred_src, Constant)
+            c = inferred_src.val
+            if !is_inlineable_constant(c)
                 return compileable_specialization(state.et, match)
             end
-            isconst, src = true, quoted(inferred_src.val)
+            isconst, src = true, quoted(c)
         else
             isconst, src = false, inferred_src
         end
@@ -863,12 +864,15 @@ function handle_single_case!(ir::IRCode, stmt::Expr, idx::Int, @nospecialize(cas
 end
 
 @latticeop args function is_valid_type_for_apply_rewrite(@nospecialize(typ), params::OptimizationParams)
-    if isa(typ, Const) && isa(typ.val, SimpleVector)
-        length(typ.val) > params.MAX_TUPLE_SPLAT && return false
-        for p in typ.val
-            is_inlineable_constant(p) || return false
+    if isConst(typ)
+        val = constant(typ)
+        if isa(val, SimpleVector)
+            length(val) > params.MAX_TUPLE_SPLAT && return false
+            for p in val
+                is_inlineable_constant(p) || return false
+            end
+            return true
         end
-        return true
     end
     typ = widenconst(typ)
     if isa(typ, DataType) && typ.name === NamedTuple_typename
@@ -889,15 +893,15 @@ function inline_splatnew!(ir::IRCode, idx::Int)
     stmt = ir.stmts[idx][:inst]::Expr
     ty = ir.stmts[idx][:type]
     nf = nfields_tfunc(unwraptype(ty))
-    if nf isa Const
+    if isConst(nf)
         eargs = stmt.args
         tup = eargs[2]
         tt = argextype(tup, ir, ir.sptypes)
         tnf = nfields_tfunc(unwraptype(tt))
-        # TODO: hoisting this tnf.val === nf.val check into codegen
+        # TODO: hoisting this constant(tnf) === constant(nf) check into codegen
         # would enable us to almost always do this transform
-        if tnf isa Const && tnf.val === nf.val
-            n = tnf.val::Int
+        if isConst(tnf) && constant(tnf) === constant(nf)
+            n = constant(tnf)::Int
             new_argexprs = Any[eargs[1]]
             for j = 1:n
                 atype = getfield_tfunc(unwraptype(tt), Const(j))
@@ -953,7 +957,7 @@ function inline_apply!(ir::IRCode, todo::Vector{Pair{Int, Any}}, idx::Int, sig::
             return nothing
         end
         ft = atypes[arg_start]
-        if ft isa Const && ft.val === Core.tuple
+        if isConst(ft) && constant(ft) === Core.tuple
             # if one argument is a tuple already, and the rest are empty, we can just return it
             # e.g. rewrite `((t::Tuple)...,)` to `t`
             nonempty_idx = 0
@@ -1265,9 +1269,12 @@ function assemble_inline_todo!(ir::IRCode, state::InliningState)
 
         # Check whether this call was @pure and evaluates to a constant
         if info isa MethodResultPure
-            if calltype isa Const && is_inlineable_constant(calltype.val)
-                ir.stmts[idx][:inst] = quoted(calltype.val)
-                continue
+            if isConst(calltype)
+                c = constant(calltype)
+                if is_inlineable_constant(c)
+                    ir.stmts[idx][:inst] = quoted(c)
+                    continue
+                end
             end
             ir.stmts[idx][:flag] |= IR_FLAG_EFFECT_FREE
             info = info.info
@@ -1349,7 +1356,7 @@ function early_inline_special_case(ir::IRCode, s::Signature, e::Expr, params::Op
         # typeassert(x::S, T) => x, when S<:T
         a3 = unwraptype(atypes[3])
         if (isType(a3) && !has_free_typevars(a3) && atypes[2] ⊑ a3.parameters[1]) ||
-            (isa(a3, Const) && isa(a3.val, Type) && atypes[2] ⊑ a3.val)
+            (isConst(a3) && isa(constant(a3), Type) && atypes[2] ⊑ constant(a3)::Type)
             val = e.args[2]
             val === nothing && return QuoteNode(val)
             return val
@@ -1357,8 +1364,8 @@ function early_inline_special_case(ir::IRCode, s::Signature, e::Expr, params::Op
     end
 
     if params.inlining
-        if isa(etype, Const) # || isconstType(etype)
-            val = etype.val
+        if isConst(etype) # || isconstType(etype)
+            val = constant(etype)
             is_inlineable_constant(val) || return nothing
             if isa(f, IntrinsicFunction)
                 if is_pure_intrinsic_infer(f) && intrinsic_nothrow(f, atypes[2:end])
@@ -1384,8 +1391,8 @@ function late_inline_special_case!(ir::IRCode, sig::Signature, idx::Int, stmt::E
     if isinlining && length(atypes) == 3 && istopfunction(f, :!==)
         # special-case inliner for !== that precedes _methods_by_ftype union splitting
         # and that works, even though inference generally avoids inferring the `!==` Method
-        if isa(typ, Const)
-            ir[SSAValue(idx)] = quoted(typ.val)
+        if isConst(typ)
+            ir[SSAValue(idx)] = quoted(constant(typ))
             return true
         end
         cmp_call = Expr(:call, GlobalRef(Core, :(===)), stmt.args[2], stmt.args[3])
@@ -1396,8 +1403,8 @@ function late_inline_special_case!(ir::IRCode, sig::Signature, idx::Int, stmt::E
     elseif isinlining && length(atypes) == 3 && istopfunction(f, :(>:))
         # special-case inliner for issupertype
         # that works, even though inference generally avoids inferring the `>:` Method
-        if isa(typ, Const) && _builtin_nothrow(<:, AbstractLattice[atypes[3], atypes[2]], typ)
-            ir[SSAValue(idx)] = quoted(typ.val)
+        if isConst(typ) && _builtin_nothrow(<:, AbstractLattice[atypes[3], atypes[2]], typ)
+            ir[SSAValue(idx)] = quoted(constant(typ))
             return true
         end
         subtype_call = Expr(:call, GlobalRef(Core, :(<:)), stmt.args[3], stmt.args[2])
@@ -1412,8 +1419,8 @@ function late_inline_special_case!(ir::IRCode, sig::Signature, idx::Int, stmt::E
         if isconstType(typ)
             ir[SSAValue(idx)] = quoted(typ.parameters[1])
             return true
-        elseif isa(typ, Const)
-            ir[SSAValue(idx)] = quoted(typ.val)
+        elseif isConst(typ)
+            ir[SSAValue(idx)] = quoted(constant(typ))
             return true
         end
     end

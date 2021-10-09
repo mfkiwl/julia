@@ -225,7 +225,7 @@ function finish(interp::AbstractInterpreter, opt::OptimizationState, params::Opt
     force_noinline = _any(@nospecialize(x) -> isexpr(x, :meta) && x.args[1] === :noinline, ir.meta)
 
     # compute inlining and other related optimizations
-    if (isa(result, Const) || isconstType(result))
+    if (isConst(result) || isconstType(result))
         proven_pure = false
         # must be proven pure to use const_api; otherwise we might skip throwing errors
         # (issue #20704)
@@ -261,7 +261,7 @@ function finish(interp::AbstractInterpreter, opt::OptimizationState, params::Opt
             # to the `jl_call_method_internal` fast path
             # Still set pure flag to make sure `inference` tests pass
             # and to possibly enable more optimization in the future
-            if !(isa(result, Const) && !is_inlineable_constant(result.val))
+            if !(isConst(result) && !is_inlineable_constant(constant(result)))
                 opt.const_api = true
             end
             force_noinline || (src.inlineable = true)
@@ -445,7 +445,7 @@ intrinsic_effect_free_if_nothrow(f) = f === Intrinsics.pointerref || is_pure_int
 plus_saturate(x::Int, y::Int) = max(x, y, x+y)
 
 # known return type
-isknowntype(@nospecialize T) = (T === ⊥) || isa(T, Const) || isconcretetype(widenconst(T))
+isknowntype(@nospecialize T) = (T === ⊥) || isConst(T) || isconcretetype(widenconst(T))
 
 function statement_cost(ex::Expr, line::Int, src::Union{CodeInfo, IRCode}, sptypes::Vector{AbstractLattice},
                         slottypes::Vector{AbstractLattice}, union_penalties::Bool,
@@ -589,7 +589,7 @@ function is_known_call(e::Expr, @nospecialize(func), src, sptypes::Vector{Abstra
         return false
     end
     f = argextype(e.args[1], src, sptypes, slottypes)
-    return isa(f, Const) && f.val === func
+    return isConst(f) && constant(f) === func
 end
 
 function renumber_ir_elements!(body::Vector{Any}, changemap::Vector{Int})

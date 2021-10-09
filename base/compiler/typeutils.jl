@@ -35,8 +35,8 @@ end
 #= TODO @latticeop args =# function has_nontrivial_const_info(@nospecialize t)
     isPartialStruct(t) && return true
     isa(t, PartialOpaque) && return true
-    isa(t, Const) || return false
-    val = t.val
+    isConst(t) || return false
+    val = constant(t)
     return !isdefined(typeof(val), :instance) && !(isa(val, Type) && hasuniquerep(val))
 end
 
@@ -170,8 +170,8 @@ end
 
 # N.B.: typename maps type equivalence classes to a single value
 @latticeop args function typename_static(@nospecialize(t))::AbstractLattice
-    t isa Const && return _typename(t.val)
     isConditional(t) && return NativeType(Bool.name)
+    isConst(t) && return _typename(constant(t))
     t = unwrap_unionall(widenconst(t))
     return isType(t) ? _typename(t.parameters[1]) : NativeType(Core.TypeName)
 end
@@ -183,7 +183,7 @@ function _typename(a::Union)
     tb = _typename(a.b)
     ta === tb && return ta # same type-name
     (ta === ⊥ || tb === ⊥) && return ⊥ # threw an error
-    (ta isa Const && tb isa Const) && return ⊥ # will throw an error (different type-names)
+    (isConst(ta) && isConst(tb)) && return ⊥ # will throw an error (different type-names)
     return NativeType(Core.TypeName) # uncertain result
 end
 _typename(union::UnionAll) = _typename(union.body)

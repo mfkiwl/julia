@@ -4,41 +4,13 @@
 # structs/constants #
 #####################
 
-"""
-    fields = (x::TypeLattice).fields
-    fields::Fields
+struct Constant
+    val
+end
 
-Keeps field information about a partially constant-folded `struct`.
-When fields of a `struct` are fully known we just form `Const`, but even when some of the
-fields can't be folded inference will try to keep constant information of other foled fields
-with this lattice property.
-This lattice property assumes the following invariants:
-- `immutabletype(x.typ)`: since inference doesn't reason about memory-effects of object fields
-- `x.typ` is concrete or `Tuple` type: the lattice assumes `Const ⊑ PartialStruct ⊑ concrete type ⊑ abstract type`
-"""
 const Fields = Vector{Any} # TODO Vector{TypeLattice}
 const _TOP_FIELDS = Fields()
 
-"""
-    cnd = (x::TypeLattice).conditional
-    cnd::ConditionalInfo
-
-The lattice property that comes along with `Bool`.
-It keeps some information about how this `Bool` value was created in order to enable a
-limited amount of type constraint back-propagation.
-In particular, if we branch on an object that has this lattice property `cnd::ConditionalInfo`,
-then we may assume that in the "then" branch, the type of `cnd.var::SlotNumber` will be
-limited by `cnd.vtype` and in the "else" branch, it will be limited by `cnd.elsetype`.
-Example:
-```
-cond = isa(x::Union{Int, String}, Int) # ::TypeLattice(..., ConditionalInfo(x, Int, String), ...)
-if cond
-   ... # x::Int
-else
-   ... # x::String
-end
-```
-"""
 struct ConditionalInfo
     var::SlotNumber
     vtype    # TODO ::TypeLattice
@@ -48,16 +20,6 @@ struct ConditionalInfo
     end
 end
 
-"""
-    cnd = (x::TypeLattice).conditional
-    cnd::InterConditionalInfo
-
-Similar to `ConditionalInfo`, but conveys inter-procedural constraints imposed on call arguments.
-This is separate from `ConditionalInfo` to catch logic errors: the lattice property is
-`InterConditionalInfo` while processing a call, then `ConditionalInfo` everywhere else.
-Thus `ConditionalInfo` and `InterConditionalInfo` should not appear in the same context --
-their usages are disjoint -- though we define the lattice for `InterConditionalInfo`.
-"""
 struct InterConditionalInfo
     slot::Int
     vtype    # TODO ::TypeLattice
@@ -69,13 +31,83 @@ end
 const AnyConditionalInfo = Union{ConditionalInfo,InterConditionalInfo}
 const _TOP_CONDITIONAL_INFO = ConditionalInfo(SlotNumber(0), Any, Any)
 
+"""
+    x::TypeLattice
+
+The lattice for Julia's native type inference implementation.
+`TypeLattice` has following lattice properties and these attributes are combined to create
+a partial lattice whose height is infinite.
+
+---
+- `x.constant::Union{Nothing,Constant}` \\
+  If `x.constant !== nothing`, it means `x` is constant-folded.
+  The actual constant value can be retrieved using `constant(x)`.
+  Note that it is valid if `x` has other lattice properties even when it is constant-folded.
+  For example, `x` may have "interesting" `x.conditional` property when `isConst(x)`.
+
+  See also:
+  - constructor: `Const(val)`
+  - property query: `isConst(x)`
+  - value retrieval: `constant(x)`
+
+---
+- `x.fields::Vector{Any}` \\
+  Keeps field information about a partially constant-folded `struct`.
+  When fields of a `struct` are fully known we just form `Const`, but even when some of the
+  fields can not be folded inference will try to keep constant information of other foled
+  fields with this lattice property.
+  If this `x.fields` is empty `x` does not have the partially constant-folded information at all.
+  This lattice property assumes the following invariants:
+  - `immutabletype(x.typ)`: since inference does not reason about memory-effects of object fields
+  - `x.typ` is concrete or `Tuple` type: the lattice assumes `Const ⊑ PartialStruct ⊑ concrete type ⊑ abstract type`
+
+  See also:
+  - constructor: `PartialStruct(typ, fields)`
+  - property query: `isPartialStruct(x)`
+
+---
+- `x.conditional :: Union{ConditionalInfo, InterConditionalInfo}` \\
+  The lattice property that comes along with `Bool`.
+  It keeps some information about how this `Bool` value was created in order to enable a
+  limited amount of type constraint back-propagation.
+  In particular, if we branch on an object that has this lattice property `cnd::ConditionalInfo`,
+  then we may assume that in the "then" branch, the type of `cnd.var::SlotNumber` will be
+  limited by `cnd.vtype` and in the "else" branch, it will be limited by `cnd.elsetype`.
+  By default, this lattice is initialized as `_TOP_CONDITIONAL_INFO`, which does not convey
+  any useful information (and thus should never be used).
+  Example:
+  ```
+  cond = isa(x::Union{Int, String}, Int) # ::Conditional(:(x), Int, String)
+  if cond
+      ... # x::Int
+  else
+      ... # x::String
+  end
+  ```
+
+  In an inter-procedural context, this property can be `x.conditional::InterConditionalInfo`.
+  It is very similar to `ConditionalInfo`, but conveys inter-procedural constraints imposed
+  on call arguments.
+  They are separated to catch logic errors: the lattice property is `InterConditionalInfo`
+  while processing a call, then `ConditionalInfo` everywhere else.
+  Thus `ConditionalInfo` and `InterConditionalInfo` should not appear in the same context --
+  their usages are disjoint -- though we define the lattice for `InterConditionalInfo`.
+
+  See also:
+  - constructor: `Conditional(::SlotNumber, vtype, elsetype)` / `InterConditional(::Int, vtype, elsetype)`
+  - property query: `isConditional(x)` / `isInterConditional(x)` / `isAnyConditional(x)`
+  - property retrieval: `conditional(x)` / `interconditional(x)`
+  - property widening: `widenconditional(x)`
+---
+"""
 struct TypeLattice <: _AbstractLattice
     typ::Type
-    # elements are other type lattice members
+    constant::Union{Nothing,Constant}
     fields::Fields
     conditional::AnyConditionalInfo
 
     function TypeLattice(@nospecialize(typ);
+                         constant::Union{Nothing,Constant} = nothing,
                          fields::Fields = _TOP_FIELDS,
                          conditional::AnyConditionalInfo = _TOP_CONDITIONAL_INFO)
         # @assert !(typ isa TypeLattice) "you wrote bad code, look back at yourself"
@@ -85,7 +117,7 @@ struct TypeLattice <: _AbstractLattice
         elseif isa(typ, CompilerTypes)
             return typ
         end
-        return new(widenconst(typ)::Type, fields, conditional)
+        return new(widenconst(typ)::Type, constant, fields, conditional)
     end
 end
 
@@ -95,17 +127,30 @@ NativeType(@nospecialize typ) = TypeLattice(typ::Type)
 # - `widenconst`: unwrap any extended type lattice to Julia type
 unwraptype(@nospecialize t) = t
 function unwraptype(t::TypeLattice)
+    isConst(t) && return t
     isPartialStruct(t) && return t
     (isConditional(t) || isInterConditional(t)) && return t
     return t.typ
 end
 
+function Const(@nospecialize val)
+    typ = isa(val, Type) ? Type{val} : typeof(val)
+    constant = Constant(val)
+    return TypeLattice(typ; constant)
+end
+isConst(@nospecialize typ) = false
+isConst(typ::TypeLattice)  = typ.constant !== nothing
+# access to the `x.constant.val` field with improved type instability where `isConst(x)` holds
+# TODO once https://github.com/JuliaLang/julia/pull/41199 is merged,
+# all usages of this function can be simply replaced with `x.constant.val`
+@inline constant(x::TypeLattice) = (x.constant::Constant).val
+
 function PartialStruct(@nospecialize(typ), fields::Fields)
-    @assert (isconcretetype(typ) || istupletype(typ)) "invalid PartialStruct formed"
+    @assert (isconcretetype(typ) || istupletype(typ)) "invalid PartialStruct typ"
     typ = typ::DataType
-    @assert !ismutabletype(typ) "invalid PartialStruct formed"
-    for x in fields
-        @assert !isConditional(x) "invalid PartialStruct formed"
+    @assert !ismutabletype(typ) "invalid PartialStruct typ"
+    for field in fields
+        @assert !isConditional(field) "invalid PartialStruct field"
     end
     return TypeLattice(typ; fields)
 end
@@ -115,12 +160,26 @@ isPartialStruct(typ::TypeLattice)  = length(typ.fields) ≠ 0
 
 # TODO do some assertions ?
 function Conditional(var::SlotNumber, @nospecialize(vtype), @nospecialize(elsetype))
+    if vtype == ⊥
+        constant = Constant(false)
+    elseif elsetype == ⊥
+        constant = Constant(true)
+    else
+        constant = nothing
+    end
     conditional = ConditionalInfo(var, vtype, elsetype)
-    return TypeLattice(Bool; conditional)
+    return TypeLattice(Bool; constant, conditional)
 end
 function InterConditional(slot::Int, @nospecialize(vtype), @nospecialize(elsetype))
+    if vtype == ⊥
+        constant = Constant(false)
+    elseif elsetype == ⊥
+        constant = Constant(true)
+    else
+        constant = nothing
+    end
     conditional = InterConditionalInfo(slot, vtype, elsetype)
-    return TypeLattice(Bool; conditional)
+    return TypeLattice(Bool; constant, conditional)
 end
 isConditional(@nospecialize typ)      = false
 isConditional(typ::TypeLattice)       = isa(typ.conditional, ConditionalInfo) && typ.conditional !== _TOP_CONDITIONAL_INFO
@@ -134,15 +193,6 @@ isAnyConditional(typ::TypeLattice)    = isConditional(typ) || isInterConditional
 # all usages of this function can be simply replaced with `x.conditional`
 @inline conditional(x::TypeLattice) = x.conditional::ConditionalInfo
 @inline interconditional(x::TypeLattice) = x.conditional::InterConditionalInfo
-
-# N.B.: Const is defined in Core, to allow them to be used
-# inside the global code cache.
-#
-# # The type of a value might be constant
-# struct Const
-#     val
-# end
-import Core: Const
 
 struct PartialTypeVar <: _AbstractLattice
     tv::TypeVar
@@ -203,7 +253,6 @@ const NOT_FOUND = NotFound()
 
 const CompilerTypes = Union{
     MaybeUndef,
-    Const,
     NotFound,
     PartialTypeVar,
     PartialOpaque,
@@ -251,8 +300,11 @@ is_same_conditionals(a::InterConditionalInfo, b::InterConditionalInfo) = a.slot 
 
 @latticeop args is_lattice_bool(@nospecialize(typ)) = typ !== ⊥ && typ ⊑ Bool
 
-maybe_extract_const_bool(c::Const) = (val = c.val; isa(val, Bool)) ? val : nothing
 function maybe_extract_const_bool(x::TypeLattice)
+    if isConst(x)
+        val = constant(x)
+        return isa(val, Bool) ? val : nothing
+    end
     cnd = x.conditional
     (cnd.vtype === Bottom && !(cnd.elsetype === Bottom)) && return false
     (cnd.elsetype === Bottom && !(cnd.vtype === Bottom)) && return true
@@ -287,8 +339,8 @@ function ⊑(@nospecialize(a), @nospecialize(b))
     if isAnyConditional(a)
         if isAnyConditional(b)
             return issubconditional(a, b)
-        elseif isa(b, Const) && isa(b.val, Bool)
-            return maybe_extract_const_bool(a) === b.val
+        elseif isConst(b) && isa(constant(b), Bool)
+            return maybe_extract_const_bool(a) === constant(b)
         end
         a = Bool
     elseif isAnyConditional(b)
@@ -307,18 +359,19 @@ function ⊑(@nospecialize(a), @nospecialize(b))
         end
         return isa(b, Type) && a.typ <: b
     elseif isPartialStruct(b)
-        if isa(a, Const)
-            nfields(a.val) == length(b.fields) || return false
+        if isConst(a)
+            aval = constant(a)
+            nfields(aval) == length(b.fields) || return false
             widenconst(b).name === widenconst(a).name || return false
             # We can skip the subtype check if b is a Tuple, since in that
             # case, the ⊑ of the elements is sufficient.
             if b.typ.name !== Tuple.name && !(widenconst(a) <: widenconst(b))
                 return false
             end
-            for i in 1:nfields(a.val)
+            for i in 1:nfields(aval)
                 # XXX: let's handle varargs later
-                isdefined(a.val, i) || return false
-                ⊑(Const(getfield(a.val, i)), b.fields[i]) || return false
+                isdefined(aval, i) || return false
+                ⊑(Const(getfield(aval, i)), b.fields[i]) || return false
             end
             return true
         end
@@ -332,17 +385,18 @@ function ⊑(@nospecialize(a), @nospecialize(b))
         end
         return widenconst(a) ⊑ b
     end
-    if isa(a, Const)
-        if isa(b, Const)
-            return a.val === b.val
+    if isConst(a)
+        aval = constant(a)
+        if isConst(b)
+            return aval === constant(b)
         end
         # TODO: `b` could potentially be a `PartialTypeVar` here, in which case we might be
         # able to return `true` in more cases; in the meantime, just returning this is the
         # most conservative option.
-        return isa(b, Type) && isa(a.val, b)
-    elseif isa(b, Const)
+        return isa(b, Type) && isa(aval, b)
+    elseif isConst(b)
         if isa(a, DataType) && isdefined(a, :instance)
-            return a.instance === b.val
+            return a.instance === constant(b)
         end
         return false
     elseif isa(a, PartialTypeVar) && b === TypeVar
@@ -357,6 +411,7 @@ end
 # Check if two lattice elements are partial order equivalent. This is basically
 # `a ⊑ b && b ⊑ a` but with extra performance optimizations.
 function is_lattice_equal(@nospecialize(a), @nospecialize(b))
+    # COMBAK this egal comparison is really senseless now
     a === b && return true
     if isPartialStruct(a)
         isPartialStruct(b) || return false
@@ -368,15 +423,16 @@ function is_lattice_equal(@nospecialize(a), @nospecialize(b))
         return true
     end
     isPartialStruct(b) && return false
-    if a isa Const
+    if isConst(a)
+        isConst(b) && return constant(a) === constant(b)
         if issingletontype(b)
-            return a.val === b.instance
+            return constant(a) === b.instance
         end
         return false
     end
-    if b isa Const
+    if isConst(b)
         if issingletontype(a)
-            return a.instance === b.val
+            return a.instance === constant(b)
         end
         return false
     end
@@ -391,8 +447,6 @@ function is_lattice_equal(@nospecialize(a), @nospecialize(b))
 end
 
 widenconst(x::TypeLattice) = x.typ
-widenconst(c::AnyConditional) = Bool
-widenconst((; val)::Const) = isa(val, Type) ? Type{val} : typeof(val)
 widenconst(m::MaybeUndef) = widenconst(m.typ)
 widenconst(c::PartialTypeVar) = TypeVar
 widenconst(t::PartialOpaque) = t.typ
