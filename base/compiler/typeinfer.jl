@@ -301,8 +301,8 @@ function CodeInstance(result::InferenceResult, @nospecialize(inferred_result::An
         elseif isConst(result_type)
             rettype_const = constant(result_type)
             const_flags = 0x2
-        elseif isa(result_type, PartialOpaque)
-            rettype_const = result_type
+        elseif isPartialOpaque(result_type)
+            rettype_const = result_type.partialopaque
             const_flags = 0x2
         # TODO update me once we type `result.result::TypeLattice`
         elseif isconstType(result_type)
@@ -792,7 +792,7 @@ function typeinf_edge(interp::AbstractInterpreter, method::Method, @nospecialize
                 if isa(rettype_const, Vector{Any}) && !(Vector{Any} <: rettype)
                     return PartialStruct(rettype, rettype_const), mi
                 elseif isa(rettype_const, PartialOpaque) && rettype <: Core.OpaqueClosure
-                    return rettype_const, mi
+                    return mkPartialOpaque(rettype_const.typ, rettype_const.env, rettype_const.isva, rettype_const.parent, rettype_const.source), mi
                 elseif isa(rettype_const, InterConditionalInfo) && !(InterConditionalInfo <: rettype)
                     return InterConditional(rettype_const.slot, rettype_const.vtype, rettype_const.elsetype), mi
                 else

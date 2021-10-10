@@ -1517,7 +1517,7 @@ add_tfunc(arrayset, 4, INT_INF, (@nospecialize(boundscheck), @nospecialize(a), @
     isvaval = constant(isva)
     isa(isvaval, Bool) || return NativeType(t)
 
-    return PartialOpaque(t, tuple_tfunc(env), isvaval, linfo, sourceval)
+    return mkPartialOpaque(t, tuple_tfunc(env), isvaval, linfo, sourceval)
 end
 
 function array_type_undefable(@nospecialize(a))

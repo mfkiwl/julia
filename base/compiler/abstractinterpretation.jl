@@ -639,7 +639,7 @@ function is_const_prop_profitable_arg(@nospecialize(arg))
             is_const_prop_profitable_arg(b) && return true
         end
     end
-    isa(arg, PartialOpaque) && return true
+    isPartialOpaque(arg) && return true
     isConst(arg) || return true
     val = constant(arg)
     # don't consider mutable values or Strings useful constants
@@ -653,7 +653,7 @@ end
 function is_allconst(argtypes::Vector{AbstractLattice})
     for a in argtypes
         a = widenconditional(a)
-        if !isConst(a) && !isconstType(widenconst(a)) && !isPartialStruct(a) && !isa(a, PartialOpaque)
+        if !isConst(a) && !isconstType(widenconst(a)) && !isPartialStruct(a) && !isPartialOpaque(a)
             return false
         end
     end
@@ -927,7 +927,7 @@ function abstract_apply(interp::AbstractInterpreter, argtypes::Vector{AbstractLa
     (itft === ⊥ || aft === ⊥) && return CallMeta(⊥, false)
     aargtypes = argtype_tail(argtypes, 4)
     aftw = widenconst(aft)
-    if !isConst(aft) && !isa(aft, PartialOpaque) && (!isType(aftw) || has_free_typevars(aftw))
+    if !isConst(aft) && !isPartialOpaque(aft) && (!isType(aftw) || has_free_typevars(aftw))
         if !isconcretetype(aftw) || (aftw <: Builtin)
             add_remark!(interp, sv, "Core._apply_iterate called on a function of a non-concrete type")
             # bail now, since it seems unlikely that abstract_call will be able to do any better after splitting
@@ -1368,9 +1368,7 @@ function abstract_call_opaque_closure(interp::AbstractInterpreter, closure::Part
 end
 
 function most_general_argtypes(closure::PartialOpaque)
-    ret = Any[]
-    cc = widenconst(closure)
-    argt = (unwrap_unionall(cc)::DataType).parameters[1]
+    argt = (unwrap_unionall(closure.typ)::DataType).parameters[1]
     if !isa(argt, DataType) || argt.name !== typename(Tuple)
         argt = Tuple
     end
@@ -1383,8 +1381,8 @@ function abstract_call(interp::AbstractInterpreter, fargs::Union{Nothing,Vector{
     #print("call ", e.args[1], argtypes, "\n\n")
     ft = argtypes[1]
     f = singleton_type(ft)
-    if isa(ft, PartialOpaque)
-        return abstract_call_opaque_closure(interp, ft, argtypes[2:end], sv)
+    if isPartialOpaque(ft)
+        return abstract_call_opaque_closure(interp, ft.partialopaque, argtypes[2:end], sv)
     elseif (uft = unwrap_unionall(unwraptype(ft)); isa(uft, DataType) && uft.name === typename(Core.OpaqueClosure))
         rt = NativeType(rewrap_unionall((uft::DataType).parameters[2], unwraptype(ft)))
         return CallMeta(rt, false)
@@ -1586,11 +1584,11 @@ end
             if argtypes !== nothing
                 t = _opaque_closure_tfunc(argtypes[1], argtypes[2], argtypes[3],
                     argtypes[4], argtypes[5], anymap(unwraptype, argtypes[6:end]), sv.linfo)
-                if isa(t, PartialOpaque)
+                if isPartialOpaque(t)
                     # Infer this now so that the specialization is available to
                     # optimization.
-                    callinfo = abstract_call_opaque_closure(interp, t,
-                        most_general_argtypes(t), sv)
+                    callinfo = abstract_call_opaque_closure(interp, t.partialopaque,
+                        most_general_argtypes(t.partialopaque), sv)
                     sv.stmt_info[sv.currpc] = OpaqueClosureCreateInfo(callinfo)
                 end
             end
@@ -1746,7 +1744,7 @@ end
         end
         haveconst && return PartialStruct(rt.typ, fields)
     end
-    if isa(rt, PartialOpaque)
+    if isPartialOpaque(rt)
         return rt # XXX: this case was missed in #39512
     end
     isa(rt, TypeLattice) && return rt

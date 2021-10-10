@@ -40,12 +40,32 @@ struct PartialTypeVarInfo
 end
 const _TOP_PARTIALTYPEVAR_INFO = PartialTypeVarInfo(TypeVar(:⊤))
 
+const _TOP_PARTIALOPAQUE = let
+    @compile
+    f = x->x
+    f(42)
+    m = first(methods(f))
+    i = findfirst(x->isa(x,MethodInstance), m.specializations)
+    linfo = m.specializations[i]
+    PartialOpaque(Any, Tuple, true, linfo, m)
+end
+
 """
     x::TypeLattice
 
 The lattice for Julia's native type inference implementation.
 `TypeLattice` has following lattice properties and these attributes are combined to create
 a partial lattice whose height is infinite.
+
+---
+- `x.causes :: IdSet{InferenceState}` \\
+  If not empty, it indicates the `x` has been approximated due to the "causes".
+  N.B. in the lattice, `x` is epsilon smaller than `ignorelimited(x)` (except `Bottom`)
+
+  See also:
+  - constructor: `LimitedAccuracy(::TypeLattice, ::IdSet{InferenceState})`
+  - property query: `isLimitedAccuracy(x)`
+  - property widening: `ignorelimited(x)`
 
 ---
 - `x.constant::Union{Nothing,Constant}` \\
@@ -109,7 +129,7 @@ a partial lattice whose height is infinite.
   - property widening: `widenconditional(x)`
 
 ---
-- `x.partialtypevar :: PartialTypeVarInfo`
+- `x.partialtypevar :: PartialTypeVarInfo` \\
   Tracks an identity of `TypeVar` so that `x` can produce better inference for `UnionAll`
   construction.
   By default `x.partialtypevar` is initialized with `_TOP_PARTIALTYPEVAR_INFO` (no information).
@@ -119,18 +139,24 @@ a partial lattice whose height is infinite.
   - property query: `isPartialTypeVar(x)`
 
 ---
+- `x.partialopaque :: PartialOpaque` \\
+  Holds opaque closure information.
+
+  See also:
+  - constructor: `mkPartialOpaque`
+  - property query: `isPartialOpaque`
+
+---
 """
 struct TypeLattice <: _AbstractLattice
     typ::Type
-    # Represent that the type estimate has been approximated, due to "causes"
-    # (only used in abstract interpretion, doesn't appear in optimization)
-    # N.B. in the lattice, this is epsilon smaller than `typ` (except Union{})
     causes::Causes
     # COMBAK capitalize these field names ?
     constant::Union{Nothing,Constant}
     fields::Fields
     conditional::AnyConditionalInfo
     partialtypevar::PartialTypeVarInfo
+    partialopaque::PartialOpaque
 
     function TypeLattice(@nospecialize(typ);
                          causes::Causes                     = _TOP_CAUSES,
@@ -138,6 +164,7 @@ struct TypeLattice <: _AbstractLattice
                          fields::Fields                     = _TOP_FIELDS,
                          conditional::AnyConditionalInfo    = _TOP_CONDITIONAL_INFO,
                          partialtypevar::PartialTypeVarInfo = _TOP_PARTIALTYPEVAR_INFO,
+                         partialopaque::PartialOpaque       = _TOP_PARTIALOPAQUE,
                          )
         # TODO remove these safe-checks
         if isa(typ, TypeLattice)
@@ -151,6 +178,7 @@ struct TypeLattice <: _AbstractLattice
                    fields,
                    conditional,
                    partialtypevar,
+                   partialopaque,
                    )
     end
 end
@@ -240,6 +268,12 @@ function PartialTypeVar(
 end
 isPartialTypeVar(@nospecialize typ) = isa(typ, TypeLattice) && typ.partialtypevar !== _TOP_PARTIALTYPEVAR_INFO
 
+function mkPartialOpaque(@nospecialize(typ), @nospecialize(env), isva::Bool, parent::MethodInstance, source::Method)
+    partialopaque = PartialOpaque(typ, env, isva, parent, source)
+    return TypeLattice(typ; partialopaque)
+end
+isPartialOpaque(@nospecialize typ) = isa(typ, TypeLattice) && typ.partialopaque !== _TOP_PARTIALOPAQUE
+
 # Wraps a type and represents that the value may also be undef at this point.
 # (only used in optimize, not abstractinterpret)
 # N.B. in the lattice, this is epsilon bigger than `typ` (even Any)
@@ -282,7 +316,6 @@ const SSAValueType  = Union{NotFound,AbstractLattice} # element
 
 const CompilerTypes = Union{
     MaybeUndef,
-    PartialOpaque,
     TypeofVararg,
 }
 x::CompilerTypes == y::CompilerTypes = x === y
@@ -405,11 +438,11 @@ function ⊑(@nospecialize(a), @nospecialize(b))
         end
         return false
     end
-    if isa(a, PartialOpaque)
-        if isa(b, PartialOpaque)
+    if isPartialOpaque(a)
+        if isPartialOpaque(b)
+            a, b = a.partialopaque, b.partialopaque
             (a.parent === b.parent && a.source === b.source) || return false
-            return (widenconst(a) <: widenconst(b)) &&
-                ⊑(a.env, b.env)
+            return (a.typ <: b.typ) && ⊑(a.env, b.env)
         end
         return widenconst(a) ⊑ b
     end
@@ -464,19 +497,19 @@ function is_lattice_equal(@nospecialize(a), @nospecialize(b))
         end
         return false
     end
-    if isa(a, PartialOpaque)
-        isa(b, PartialOpaque) || return false
-        widenconst(a) == widenconst(b) || return false
+    if isPartialOpaque(a)
+        isPartialOpaque(b) || return false
+        a, b = a.partialopaque, b.partialopaque
+        a.typ === b.typ || return false
         a.source === b.source || return false
         a.parent === b.parent || return false
-        return is_lattice_equal(a.env, b.env)
+        return is_lattice_equal(a.partialopaque.env, b.partialopaque.env)
     end
     return a ⊑ b && b ⊑ a
 end
 
 widenconst(x::TypeLattice) = x.typ
 widenconst(m::MaybeUndef) = widenconst(m.typ)
-widenconst(t::PartialOpaque) = t.typ
 widenconst(t::Type) = t
 widenconst(t::TypeVar) = t
 widenconst(t::Core.TypeofVararg) = t

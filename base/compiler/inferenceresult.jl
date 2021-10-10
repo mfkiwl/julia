@@ -3,7 +3,7 @@
 @latticeop args function is_argtype_match(@nospecialize(given_argtype),
                           @nospecialize(cache_argtype),
                           overridden_by_const::Bool)
-    if isConst(given_argtype) || isPartialStruct(given_argtype) || isa(given_argtype, PartialOpaque)
+    if isConst(given_argtype) || isPartialStruct(given_argtype) || isPartialOpaque(given_argtype)
         return is_lattice_equal(given_argtype, cache_argtype)
     end
     return !overridden_by_const
