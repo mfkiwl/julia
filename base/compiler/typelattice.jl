@@ -4,6 +4,9 @@
 # structs/constants #
 #####################
 
+const Causes = IdSet{InferenceState}
+const _TOP_CAUSES = Causes()
+
 struct Constant
     val
 end
@@ -119,6 +122,10 @@ a partial lattice whose height is infinite.
 """
 struct TypeLattice <: _AbstractLattice
     typ::Type
+    # Represent that the type estimate has been approximated, due to "causes"
+    # (only used in abstract interpretion, doesn't appear in optimization)
+    # N.B. in the lattice, this is epsilon smaller than `typ` (except Union{})
+    causes::Causes
     # COMBAK capitalize these field names ?
     constant::Union{Nothing,Constant}
     fields::Fields
@@ -126,6 +133,7 @@ struct TypeLattice <: _AbstractLattice
     partialtypevar::PartialTypeVarInfo
 
     function TypeLattice(@nospecialize(typ);
+                         causes::Causes                     = _TOP_CAUSES,
                          constant::Union{Nothing,Constant}  = nothing,
                          fields::Fields                     = _TOP_FIELDS,
                          conditional::AnyConditionalInfo    = _TOP_CONDITIONAL_INFO,
@@ -137,7 +145,13 @@ struct TypeLattice <: _AbstractLattice
         elseif isa(typ, CompilerTypes)
             return typ
         end
-        return new(widenconst(typ)::Type, constant, fields, conditional, partialtypevar)
+        return new(widenconst(typ)::Type,
+                   causes,
+                   constant,
+                   fields,
+                   conditional,
+                   partialtypevar,
+                   )
     end
 end
 
@@ -146,6 +160,19 @@ NativeType(@nospecialize typ) = TypeLattice(typ::Type)
 # - `unwraptype`: unwrap `NativeType` to native Julia type
 # - `widenconst`: unwrap any extended type lattice to native Julia type
 unwraptype(@nospecialize t) = (isa(t, TypeLattice) && t === NativeType(t.typ)) ? t.typ : t
+
+function LimitedAccuracy(x::TypeLattice, causes::Causes)
+    @assert !isLimitedAccuracy(x) "nested LimitedAccuracy"
+    @assert !isempty(causes) "malformed LimitedAccuracy"
+    return TypeLattice(x.typ;
+                       causes,
+                       x.constant,
+                       x.fields,
+                       x.conditional,
+                       x.partialtypevar,
+                       )
+end
+isLimitedAccuracy(@nospecialize typ) = isa(typ, TypeLattice) && !isempty(typ.causes)
 
 function Const(@nospecialize val)
     typ = isa(val, Type) ? Type{val} : typeof(val)
@@ -168,7 +195,7 @@ function PartialStruct(@nospecialize(typ), fields::Fields)
     return TypeLattice(typ; fields)
 end
 istupletype(@nospecialize typ) = isa(typ, DataType) && typ.name.name === :Tuple
-isPartialStruct(@nospecialize typ) = isa(typ, TypeLattice) && length(typ.fields) ≠ 0
+isPartialStruct(@nospecialize typ) = isa(typ, TypeLattice) && !isempty(typ.fields)
 
 # TODO do some assertions ?
 function Conditional(var::SlotNumber, @nospecialize(vtype), @nospecialize(elsetype))
@@ -228,22 +255,10 @@ struct StateUpdate
     conditional::Bool
 end
 
-# Represent that the type estimate has been approximated, due to "causes"
-# (only used in abstract interpretion, doesn't appear in optimization)
-# N.B. in the lattice, this is epsilon smaller than `typ` (except Union{})
-struct LimitedAccuracy <: _AbstractLattice
-    typ::AbstractLattice
-    causes::IdSet{InferenceState}
-    @latticeop args function LimitedAccuracy(@nospecialize(typ), causes::IdSet{InferenceState})
-        @assert !isa(typ, LimitedAccuracy) "malformed LimitedAccuracy"
-        return new(typ, causes)
-    end
-end
-
 @inline @latticeop args function collect_limitations!(@nospecialize(typ), sv::InferenceState)
-    if isa(typ, LimitedAccuracy)
+    if isLimitedAccuracy(typ)
         union!(sv.pclimitations, typ.causes)
-        return typ.typ
+        return _ignorelimited(typ)
     end
     return typ
 end
@@ -268,7 +283,6 @@ const SSAValueType  = Union{NotFound,AbstractLattice} # element
 const CompilerTypes = Union{
     MaybeUndef,
     PartialOpaque,
-    LimitedAccuracy,
     TypeofVararg,
 }
 x::CompilerTypes == y::CompilerTypes = x === y
@@ -327,16 +341,18 @@ maybe_extract_const_bool(@nospecialize c) = nothing
 function ⊑(@nospecialize(a), @nospecialize(b))
     a = unwraptype(a)
     b = unwraptype(b)
-    if isa(b, LimitedAccuracy)
-        if !isa(a, LimitedAccuracy)
+    if isLimitedAccuracy(b)
+        if !isLimitedAccuracy(a)
             return false
         end
         if b.causes ⊈ a.causes
             return false
         end
-        b = b.typ
+        b = unwraptype(_ignorelimited(b))
     end
-    isa(a, LimitedAccuracy) && (a = a.typ)
+    if isLimitedAccuracy(a)
+        a = unwraptype(_ignorelimited(a))
+    end
     if isa(a, MaybeUndef) && !isa(b, MaybeUndef)
         return false
     end
@@ -464,7 +480,6 @@ widenconst(t::PartialOpaque) = t.typ
 widenconst(t::Type) = t
 widenconst(t::TypeVar) = t
 widenconst(t::Core.TypeofVararg) = t
-widenconst(t::LimitedAccuracy) = error("unhandled LimitedAccuracy")
 
 issubstate(a::VarState, b::VarState) = (a.typ ⊑ b.typ && a.undef <= b.undef)
 
@@ -481,27 +496,27 @@ end
 @inline schanged(@nospecialize(n), @nospecialize(o)) = (n !== o) && (o === NOT_FOUND || (n !== NOT_FOUND && !issubstate(n::VarState, o::VarState)))
 
 widenconditional(@nospecialize typ) = typ
-function widenconditional(typ::TypeLattice)
-    if isAnyConditional(typ)
-        # TODO form new `TypeLattice` with `_TOP_CONDITIONAL_INFO`
-        cnd = typ.conditional
-        if cnd.vtype === Bottom
-            return Const(false)
-        elseif cnd.elsetype === Bottom
-            return Const(true)
-        else
-            return NativeType(Bool)
-        end
-    end
-    return typ
+widenconditional(typ::TypeLattice) = isAnyConditional(typ) ? _widenconditional(typ) : typ
+function _widenconditional(typ::TypeLattice)
+    return TypeLattice(Bool;
+                       typ.causes,
+                       typ.constant,
+                       typ.fields,
+                       conditional = _TOP_CONDITIONAL_INFO,
+                       typ.partialtypevar)
 end
-widenconditional(t::LimitedAccuracy) = error("unhandled LimitedAccuracy")
-
-widenwrappedconditional(@nospecialize(typ))   = widenconditional(typ)
-widenwrappedconditional(typ::LimitedAccuracy) = LimitedAccuracy(widenconditional(typ.typ), typ.causes)
 
 ignorelimited(@nospecialize typ) = typ
-ignorelimited(typ::LimitedAccuracy) = typ.typ
+ignorelimited(typ::TypeLattice) = isLimitedAccuracy(typ) ? _ignorelimited(typ) : typ
+function _ignorelimited(typ::TypeLattice)
+    return TypeLattice(typ.typ;
+                       causes = _TOP_CAUSES,
+                       typ.constant,
+                       typ.fields,
+                       typ.conditional,
+                       typ.partialtypevar,
+                       )
+end
 
 function stupdate!(state::Nothing, changes::StateUpdate)
     newst = copy(changes.state)
@@ -513,10 +528,9 @@ function stupdate!(state::Nothing, changes::StateUpdate)
         for i = 1:length(newst)
             newtype = newst[i]
             if isa(newtype, VarState)
-                newtypetyp = ignorelimited(newtype.typ)
+                newtypetyp = newtype.typ
                 if isConditional(newtypetyp) && slot_id(conditional(newtypetyp).var) == changeid
-                    newtypetyp = widenwrappedconditional(newtype.typ)
-                    newst[i] = VarState(newtypetyp, newtype.undef)
+                    newst[i] = VarState(widenconditional(newtypetyp), newtype.undef)
                 end
             end
         end
@@ -537,10 +551,9 @@ function stupdate!(state::VarTable, changes::StateUpdate)
         # remove any Conditional for this slot from the vtable
         # (unless this change is came from the conditional)
         if !changes.conditional && isa(newtype, VarState)
-            newtypetyp = ignorelimited(newtype.typ)
+            newtypetyp = newtype.typ
             if isConditional(newtypetyp) && slot_id(conditional(newtypetyp).var) == changeid
-                newtypetyp = widenwrappedconditional(newtype.typ)
-                newtype = VarState(newtypetyp, newtype.undef)
+                newtype = VarState(widenconditional(newtypetyp), newtype.undef)
             end
         end
         if schanged(newtype, oldtype)
@@ -576,13 +589,9 @@ function stupdate1!(state::VarTable, change::StateUpdate)
         for i = 1:length(state)
             oldtype = state[i]
             if isa(oldtype, VarState)
-                oldtypetyp = ignorelimited(oldtype.typ)
+                oldtypetyp = oldtype.typ
                 if isConditional(oldtypetyp) && slot_id(conditional(oldtypetyp).var) == changeid
-                    oldtypetyp = widenconditional(oldtypetyp)
-                    if oldtype.typ isa LimitedAccuracy
-                        oldtypetyp = LimitedAccuracy(oldtypetyp, (oldtype.typ::LimitedAccuracy).causes)
-                    end
-                    state[i] = VarState(oldtypetyp, oldtype.undef)
+                    state[i] = VarState(widenconditional(oldtypetyp), oldtype.undef)
                 end
             end
         end

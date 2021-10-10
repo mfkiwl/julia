@@ -251,7 +251,7 @@ function _typeinf(interp::AbstractInterpreter, frame::InferenceState)
         opt = caller.src
         if opt isa OptimizationState # implies `may_optimize(interp) === true`
             result_type = caller.result
-            @assert !(result_type isa LimitedAccuracy)
+            @assert !isLimitedAccuracy(result_type)
             optimize(interp, opt, OptimizationParams(interp), result_type)
             if opt.const_api
                 # XXX: The work in ir_to_codeinf! is essentially wasted. The only reason
@@ -288,7 +288,7 @@ function CodeInstance(result::InferenceResult, @nospecialize(inferred_result::An
                       valid_worlds::WorldRange)
     local const_flags::Int32
     result_type = result.result
-    @assert !(result_type isa LimitedAccuracy)
+    @assert !isLimitedAccuracy(result_type)
     if isa(inferred_result, Constant)
         # use constant calling convention
         rettype_const = inferred_result.val
@@ -397,11 +397,11 @@ function cache_result!(interp::AbstractInterpreter, result::InferenceResult)
 end
 
 function cycle_fix_limited(@nospecialize(typ), sv::InferenceState)
-    if typ isa LimitedAccuracy
+    if isLimitedAccuracy(typ)
         if sv.parent === nothing
             # when part of a cycle, we might have unintentionally introduced a limit marker
             @assert !isempty(sv.callers_in_cycle)
-            return typ.typ
+            return _ignorelimited(typ)
         end
         causes = copy(typ.causes)
         delete!(causes, sv)
@@ -409,10 +409,10 @@ function cycle_fix_limited(@nospecialize(typ), sv::InferenceState)
             delete!(causes, caller)
         end
         if isempty(causes)
-            return typ.typ
+            return _ignorelimited(typ)
         end
         if length(causes) != length(typ.causes)
-            return LimitedAccuracy(typ.typ, causes)
+            return LimitedAccuracy(_ignorelimited(typ), causes)
         end
     end
     return typ
@@ -439,13 +439,13 @@ function finish(me::InferenceState, interp::AbstractInterpreter)
     # inspect whether our inference had a limited result accuracy,
     # else it may be suitable to cache
     me.bestguess = cycle_fix_limited(me.bestguess, me)
-    limited_ret = me.bestguess isa LimitedAccuracy
+    limited_ret = isLimitedAccuracy(me.bestguess)
     limited_src = false
     if !limited_ret
         gt = me.src.ssavaluetypes::SSAValueTypes
         for j = 1:length(gt)
-            gt[j] = gtj = cycle_fix_limited(gt[j], me)
-            if gtj isa LimitedAccuracy && me.parent !== nothing
+            gt[j] = gtj = cycle_fix_limited(gt[j]::SSAValueType, me)
+            if isLimitedAccuracy(gtj) && me.parent !== nothing
                 limited_src = true
                 break
             end
@@ -617,7 +617,7 @@ function type_annotate!(sv::InferenceState, run_optimizer::Bool)
     # to hold all of the items assigned into it
     record_slot_assign!(sv)
     sv.src.slottypes = sv.slottypes
-    @assert !(sv.bestguess isa LimitedAccuracy)
+    @assert !isLimitedAccuracy(sv.bestguess)
     sv.src.rettype = sv.bestguess
 
     # annotate variables load types

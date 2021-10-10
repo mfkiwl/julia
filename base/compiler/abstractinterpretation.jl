@@ -112,8 +112,8 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(f),
                 any_const_result = true
             end
         end
-        this_conditional = ignorelimited(this_rt)
-        this_rt = widenwrappedconditional(this_rt)
+        this_conditional = this_rt
+        this_rt = widenconditional(this_rt)
         @assert !isConditional(this_conditional) "invalid lattice element returned from inter-procedural context"
         seen += 1
         rettype = tmerge(rettype, this_rt)
@@ -1983,9 +1983,12 @@ end
     oldtyp = changes[slot_id(var)].typ
     # approximate test for `typ ∩ oldtyp` being better than `oldtyp`
     # since we probably formed these types with `typesubstract`, the comparison is likely simple
-    if ignorelimited(typ) ⊑ ignorelimited(oldtyp)
+    typ′, oldtyp′ = ignorelimited(typ), ignorelimited(oldtyp)
+    if typ′ ⊑ oldtyp′
         # typ is better unlimited, but we may still need to compute the tmeet with the limit "causes" since we ignored those in the comparison
-        oldtyp isa LimitedAccuracy && (typ = tmerge(typ, LimitedAccuracy(⊥, oldtyp.causes)))
+        if isLimitedAccuracy(oldtyp)
+            typ = LimitedAccuracy(typ′, oldtyp.causes)
+        end
         return StateUpdate(var, VarState(typ, false), changes, true)
     end
     return changes

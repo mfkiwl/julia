@@ -306,7 +306,7 @@ function _tmerge(@nospecialize(typea), @nospecialize(typeb))
     # the merge create a slightly narrower type than needed, but we can't
     # represent the precise intersection of causes and don't attempt to
     # enumerate some of these cases where we could
-    if isa(typea, LimitedAccuracy) && isa(typeb, LimitedAccuracy)
+    if isLimitedAccuracy(typea) && isLimitedAccuracy(typeb)
         if typea.causes ⊆ typeb.causes
             causes = typeb.causes
         elseif typeb.causes ⊆ typea.causes
@@ -314,11 +314,11 @@ function _tmerge(@nospecialize(typea), @nospecialize(typeb))
         else
             causes = union!(copy(typea.causes), typeb.causes)
         end
-        return LimitedAccuracy(tmerge(typea.typ, typeb.typ), causes)
-    elseif isa(typea, LimitedAccuracy)
-        return LimitedAccuracy(tmerge(typea.typ, typeb), typea.causes)
-    elseif isa(typeb, LimitedAccuracy)
-        return LimitedAccuracy(tmerge(typea, typeb.typ), typeb.causes)
+        return LimitedAccuracy(tmerge(_ignorelimited(typea), _ignorelimited(typeb)), causes)
+    elseif isLimitedAccuracy(typea)
+        return LimitedAccuracy(tmerge(_ignorelimited(typea), typeb), typea.causes)
+    elseif isLimitedAccuracy(typeb)
+        return LimitedAccuracy(tmerge(typea, _ignorelimited(typeb)), typeb.causes)
     end
     # type-lattice for MaybeUndef wrapper
     if isa(typea, MaybeUndef) || isa(typeb, MaybeUndef)
