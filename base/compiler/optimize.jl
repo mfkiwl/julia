@@ -83,14 +83,14 @@ mutable struct OptimizationState
         # if it isn't already
         nssavalues = src.ssavaluetypes
         if nssavalues isa Int
-            src.ssavaluetypes = AbstractLattice[ NativeType(Any) for i = 1:nssavalues ]
+            src.ssavaluetypes = Any[ ⊤ for i = 1:nssavalues ]
         else
-            nssavalues = length(src.ssavaluetypes::Vector{AbstractLattice})
+            nssavalues = length(src.ssavaluetypes::SSAValueTypes)
         end
         nslots = length(src.slotflags)
         slottypes = src.slottypes
         if slottypes === nothing
-            slottypes = AbstractLattice[ NativeType(Any) for i = 1:nslots ]
+            slottypes = AbstractLattice[ ⊤ for i = 1:nslots ]
         end
         stmt_info = Any[nothing for i = 1:nssavalues]
         # cache some useful state computations
@@ -351,7 +351,7 @@ function convert_to_ircode(ci::CodeInfo, code::Vector{Any}, coverage::Bool, sv::
     prevloc = zero(eltype(ci.codelocs))
     stmtinfo = sv.stmt_info
     codelocs = ci.codelocs
-    ssavaluetypes = ci.ssavaluetypes::Vector{AbstractLattice}
+    ssavaluetypes = ci.ssavaluetypes::SSAValueTypes
     ssaflags = ci.ssaflags
     while idx <= length(code)
         codeloc = codelocs[idx]

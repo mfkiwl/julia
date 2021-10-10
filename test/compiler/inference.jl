@@ -1544,7 +1544,7 @@ let linfo = get_linfo(Base.convert, Tuple{Type{Int64}, Int32}),
     # make sure the state of the properties look reasonable
     @test opt.src !== linfo.def.source
     @test length(opt.src.slotflags) == linfo.def.nargs <= length(opt.src.slotnames)
-    @test opt.src.ssavaluetypes isa Vector{Core.Compiler.AbstractLattice}
+    @test opt.src.ssavaluetypes isa Core.Compiler.SSAValueTypes
     @test !opt.src.inferred
     @test opt.mod === Base
 end
@@ -3431,7 +3431,7 @@ let
     mi = Core.Compiler.specialize_method(first(methods(f_convert_me_to_ir)),
         Tuple{Bool, Float64}, Core.svec())
     ci = Base.uncompressed_ast(mi.def)
-    ci.ssavaluetypes = Core.Compiler.AbstractLattice[Core.Compiler.NativeType(Any) for i = 1:ci.ssavaluetypes]
+    ci.ssavaluetypes = Any[Core.Compiler.⊤ for i = 1:ci.ssavaluetypes]
     sv = Core.Compiler.OptimizationState(mi, Core.Compiler.OptimizationParams(),
         Core.Compiler.NativeInterpreter())
     ir = Core.Compiler.convert_to_ircode(ci, Core.Compiler.copy_exprargs(ci.code),

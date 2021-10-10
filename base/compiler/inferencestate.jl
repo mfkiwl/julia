@@ -79,7 +79,9 @@ mutable struct InferenceState
         sp = sptypes_from_meth_instance(linfo::MethodInstance)
 
         nssavalues = src.ssavaluetypes::Int
-        src.ssavaluetypes = AbstractLattice[ NOT_FOUND for i = 1:nssavalues ]
+        # NOTE we can't initialize `src.ssavaluetypes` as `Vector{AbstractLattice}` to avoid
+        # an allocation within `ir_to_codeinf!(src)` where we widen all ssavaluetypes to native Julia types
+        src.ssavaluetypes = Any[ NOT_FOUND for i = 1:nssavalues ]
         stmt_info = Any[ nothing for i = 1:length(code) ]
 
         n = length(code)
@@ -333,8 +335,8 @@ end
 update_valid_age!(edge::InferenceState, sv::InferenceState) = update_valid_age!(sv, edge.valid_worlds)
 
 @latticeop args function record_ssa_assign(ssa_id::Int, @nospecialize(new), frame::InferenceState)
-    ssavaluetypes = frame.src.ssavaluetypes::Vector{Any}
-    old = ssavaluetypes[ssa_id]
+    ssavaluetypes = frame.src.ssavaluetypes::SSAValueTypes
+    old = ssavaluetypes[ssa_id]::SSAValueType
     if old === NOT_FOUND || !(new ⊑ old)
         # typically, we expect that old ⊑ new (that output information only
         # gets less precise with worse input information), but to actually

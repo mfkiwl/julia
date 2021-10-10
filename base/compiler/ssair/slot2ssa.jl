@@ -176,7 +176,7 @@ end
 function strip_trailing_junk!(ci::CodeInfo, code::Vector{Any}, info::Vector{Any})
     # Remove `nothing`s at the end, we don't handle them well
     # (we expect the last instruction to be a terminator)
-    ssavaluetypes = ci.ssavaluetypes::Vector{AbstractLattice}
+    ssavaluetypes = ci.ssavaluetypes::SSAValueTypes
     (; codelocs, ssaflags) = ci
     for i = length(code):-1:1
         if code[i] !== nothing
@@ -215,10 +215,10 @@ function typ_for_val(@nospecialize(x), ci::CodeInfo, sptypes::Vector{AbstractLat
         elseif x.head === :copyast
             return typ_for_val(x.args[1], ci, sptypes, idx, slottypes)
         end
-        return (ci.ssavaluetypes::Vector{AbstractLattice})[idx]
+        return (ci.ssavaluetypes::SSAValueTypes)[idx]::AbstractLattice
     end
     isa(x, GlobalRef) && return abstract_eval_global(x.mod, x.name)
-    isa(x, SSAValue) && return (ci.ssavaluetypes::Vector{AbstractLattice})[x.id]
+    isa(x, SSAValue) && return (ci.ssavaluetypes::SSAValueTypes)[x.id]::AbstractLattice
     isa(x, Argument) && return slottypes[x.n]
     isa(x, NewSSAValue) && return DelayedTyp(x)
     isa(x, QuoteNode) && return Const(x.value)
@@ -801,7 +801,7 @@ function construct_ssa!(ci::CodeInfo, ir::IRCode, domtree::DomTree,
         end
     end
     # Convert into IRCode form
-    ssavaluetypes = ci.ssavaluetypes::Vector{AbstractLattice}
+    ssavaluetypes = ci.ssavaluetypes::SSAValueTypes
     nstmts = length(ir.stmts)
     new_code = Vector{Any}(undef, nstmts)
     ssavalmap = fill(SSAValue(-1), length(ssavaluetypes) + 1)
@@ -828,7 +828,7 @@ function construct_ssa!(ci::CodeInfo, ir::IRCode, domtree::DomTree,
             new_code[idx] = stmt
         else
             ssavalmap[idx] = SSAValue(idx)
-            result_types[idx] = ssavaluetypes[idx]
+            result_types[idx] = ssavaluetypes[idx]::AbstractLattice
             if isa(stmt, PhiNode)
                 edges = Int32[edge == 0 ? 0 : block_for_inst(cfg, Int(edge)) for edge in stmt.edges]
                 new_code[idx] = PhiNode(edges, stmt.values)

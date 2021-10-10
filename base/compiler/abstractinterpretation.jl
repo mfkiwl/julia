@@ -1672,7 +1672,7 @@ end
 end
 
 @latticeop ret function abstract_eval_ssavalue(s::SSAValue, src::CodeInfo)
-    typ = (src.ssavaluetypes::Vector{AbstractLattice})[s.id]
+    typ = (src.ssavaluetypes::SSAValueTypes)[s.id]::SSAValueType
     if typ === NOT_FOUND
         return ⊥
     end
@@ -1765,7 +1765,7 @@ function typeinf_local(interp::AbstractInterpreter, frame::InferenceState)
     isva = isa(def, Method) && def.isva
     nslots = nargs - isva
     slottypes = frame.slottypes
-    ssavaluetypes = frame.src.ssavaluetypes::Vector{AbstractLattice}
+    ssavaluetypes = frame.src.ssavaluetypes::SSAValueTypes
     while frame.pc´´ <= n
         # make progress on the active ip set
         local pc::Int = frame.pc´´
@@ -1868,7 +1868,7 @@ function typeinf_local(interp::AbstractInterpreter, frame::InferenceState)
                     for (caller, caller_pc) in frame.cycle_backedges
                         # notify backedges of updated type information
                         typeassert(caller.stmt_types[caller_pc], VarTable) # we must have visited this statement before
-                        if !((caller.src.ssavaluetypes::Vector{AbstractLattice})[caller_pc] === ⊤)
+                        if !((caller.src.ssavaluetypes::SSAValueTypes)[caller_pc] === ⊤)
                             # no reason to revisit if that call-site doesn't affect the final result
                             if caller_pc < caller.pc´´
                                 caller.pc´´ = caller_pc

@@ -442,7 +442,7 @@ function finish(me::InferenceState, interp::AbstractInterpreter)
     limited_ret = me.bestguess isa LimitedAccuracy
     limited_src = false
     if !limited_ret
-        gt = me.src.ssavaluetypes::Vector{AbstractLattice}
+        gt = me.src.ssavaluetypes::SSAValueTypes
         for j = 1:length(gt)
             gt[j] = gtj = cycle_fix_limited(gt[j], me)
             if gtj isa LimitedAccuracy && me.parent !== nothing
@@ -507,11 +507,10 @@ end
 
 # widen all Const elements in type annotations
 function widen_all_consts!(src::CodeInfo)
-    # ssavaluetypes = src.ssavaluetypes::Vector{AbstractLattice}
-    # for i = 1:length(ssavaluetypes)
-    #     ssavaluetypes[i] = NativeType(widenconst(ssavaluetypes[i]))
-    # end
-    src.ssavaluetypes = anymap(widenconst, src.ssavaluetypes::Vector{AbstractLattice})
+    ssavaluetypes = src.ssavaluetypes::SSAValueTypes
+    for i = 1:length(ssavaluetypes)
+        ssavaluetypes[i] = widenconst(ssavaluetypes[i]::AbstractLattice)
+    end
 
     for i = 1:length(src.code)
         x = src.code[i]
@@ -575,7 +574,7 @@ function record_slot_assign!(sv::InferenceState)
     states = sv.stmt_types
     body = sv.src.code::Vector{Any}
     slottypes = sv.slottypes::Vector{AbstractLattice}
-    ssavaluetypes = sv.src.ssavaluetypes::Vector{AbstractLattice}
+    ssavaluetypes = sv.src.ssavaluetypes::SSAValueTypes
     for i = 1:length(body)
         expr = body[i]
         st_i = states[i]
@@ -584,7 +583,7 @@ function record_slot_assign!(sv::InferenceState)
             lhs = expr.args[1]
             rhs = expr.args[2]
             if isa(lhs, SlotNumber)
-                vt = widenconst(ssavaluetypes[i])
+                vt = widenconst(ssavaluetypes[i]::AbstractLattice)
                 if vt !== Bottom
                     id = slot_id(lhs)
                     otherTy = slottypes[id]
@@ -608,9 +607,9 @@ function type_annotate!(sv::InferenceState, run_optimizer::Bool)
 
     # remove all unused ssa values
     src = sv.src
-    ssavaluetypes = src.ssavaluetypes::Vector{AbstractLattice}
+    ssavaluetypes = src.ssavaluetypes::SSAValueTypes
     for j = 1:length(ssavaluetypes)
-        t = ssavaluetypes[j]
+        t = ssavaluetypes[j]::SSAValueType
         ssavaluetypes[j] = t === NOT_FOUND ? ⊥ : t
     end
 

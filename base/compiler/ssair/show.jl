@@ -534,7 +534,7 @@ function _type(code::IRCode, idx::Int)
 end
 function _type(code::CodeInfo, idx::Int)
     types = code.ssavaluetypes
-    types isa Vector || return nothing
+    types isa SSAValueTypes || return nothing
     # hide `NativeType` for IR printing
     return isassigned(types, idx) ? unwraptype(types[idx]) : UNDEF
 end

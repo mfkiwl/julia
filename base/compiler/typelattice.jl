@@ -261,9 +261,12 @@ struct NotFound end
 
 const NOT_FOUND = NotFound()
 
+# the types of `(src::CodeInfo).ssavaluetypes` after `InferenceState` construction and until `ir_to_codeinf!(src)` is called
+const SSAValueTypes = Vector{Any}
+const SSAValueType  = Union{NotFound,AbstractLattice} # element
+
 const CompilerTypes = Union{
     MaybeUndef,
-    NotFound,
     PartialOpaque,
     LimitedAccuracy,
     TypeofVararg,
