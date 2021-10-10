@@ -950,7 +950,7 @@ function modifyfield!_tfunc(o, f, op, v)
     PT = Const(Pair)
     return instanceof_tfunc(apply_type_tfunc(PT, T, T))[1]
 end
-function abstract_modifyfield!(interp::AbstractInterpreter, argtypes::Vector{AbstractLattice}, sv::InferenceState)
+function abstract_modifyfield!(interp::AbstractInterpreter, argtypes::Lattices, sv::InferenceState)
     nargs = length(argtypes)
     if !isempty(argtypes) && isvarargtype(argtypes[nargs])
         nargs - 1 <= 6 || return CallMeta(⊥, false)
@@ -1555,7 +1555,7 @@ end
 
 # Query whether the given builtin is guaranteed not to throw given the argtypes
 # FIXME, all nothrow tfuncs should work on `TypeLattice`s
-_builtin_nothrow(@nospecialize(f), argtypes::Vector{AbstractLattice}, @nospecialize(rt)) =
+_builtin_nothrow(@nospecialize(f), argtypes::Lattices, @nospecialize(rt)) =
     _builtin_nothrow(f, anymap(a->unwraptype(a), argtypes), unwraptype(rt))
 function _builtin_nothrow(@nospecialize(f), argtypes::Vector{Any}, @nospecialize(rt))
     if f === arrayset
@@ -1614,7 +1614,7 @@ function builtin_nothrow(@nospecialize(f), argtypes::Array{Any, 1}, @nospecializ
     return _builtin_nothrow(f, argtypes, rt)
 end
 
-function builtin_tfunction(interp::AbstractInterpreter, @nospecialize(f), argtypes::Vector{AbstractLattice},
+function builtin_tfunction(interp::AbstractInterpreter, @nospecialize(f), argtypes::Lattices,
                            sv::Union{InferenceState,Nothing})
     # FIXME, all inference tfuncs should work on `TypeLattice`s
     argtypes = anymap(a->unwraptype(a), argtypes)
@@ -1674,7 +1674,7 @@ _iszero(x) = x === Intrinsics.xor_int(x, x)
 _isneg1(x) = _iszero(Intrinsics.not_int(x))
 _istypemin(x) = !_iszero(x) && Intrinsics.neg_int(x) === x
 
-intrinsic_nothrow(f::IntrinsicFunction, argtypes::Vector{AbstractLattice}) =
+intrinsic_nothrow(f::IntrinsicFunction, argtypes::Lattices) =
     intrinsic_nothrow(f, anymap(unwraptype, argtypes))
 function intrinsic_nothrow(f::IntrinsicFunction, argtypes::Vector{Any})
     # First check that we have the correct number of arguments
@@ -1753,7 +1753,7 @@ end
 # TODO: this function is a very buggy and poor model of the return_type function
 # since abstract_call_gf_by_type is a very inaccurate model of _method and of typeinf_type,
 # while this assumes that it is an absolutely precise and accurate and exact model of both
-function return_type_tfunc(interp::AbstractInterpreter, argtypes::Vector{AbstractLattice}, sv::InferenceState)
+function return_type_tfunc(interp::AbstractInterpreter, argtypes::Lattices, sv::InferenceState)
     if length(argtypes) == 3
         tt = unwraptype(argtypes[3])
         if isConst(tt) || (isType(tt) && !has_free_typevars(tt))

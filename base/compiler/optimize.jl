@@ -29,7 +29,7 @@ struct InliningState{S <: Union{EdgeTracker, Nothing}, T, I<:AbstractInterpreter
 end
 
 function inlining_policy(interp::AbstractInterpreter, @nospecialize(src), stmt_flag::UInt8,
-                         mi::MethodInstance, argtypes::Vector{AbstractLattice})
+                         mi::MethodInstance, argtypes::Lattices)
     if isa(src, CodeInfo) || isa(src, Vector{UInt8})
         src_inferred = ccall(:jl_ir_flag_inferred, Bool, (Any,), src)
         src_inlineable = is_stmt_inline(stmt_flag) || ccall(:jl_ir_flag_inlineable, Bool, (Any,), src)
@@ -63,8 +63,8 @@ mutable struct OptimizationState
     ir::Union{Nothing, IRCode}
     stmt_info::Vector{Any}
     mod::Module
-    sptypes::Vector{AbstractLattice} # static parameters
-    slottypes::Vector{AbstractLattice}
+    sptypes::Lattices # static parameters
+    slottypes::Lattices
     const_api::Bool
     inlining::InliningState
     function OptimizationState(frame::InferenceState, params::OptimizationParams, interp::AbstractInterpreter)
@@ -395,7 +395,7 @@ function convert_to_ircode(ci::CodeInfo, code::Vector{Any}, coverage::Bool, sv::
     end
     strip_trailing_junk!(ci, code, stmtinfo)
     cfg = compute_basic_blocks(code)
-    types = AbstractLattice[]
+    types = Lattices()
     stmts = InstructionStream(code, types, stmtinfo, codelocs, ssaflags)
     ir = IRCode(stmts, cfg, collect(LineInfoNode, ci.linetable::Union{Vector{LineInfoNode},Vector{Any}}), sv.slottypes, meta, sv.sptypes)
     return ir
@@ -447,8 +447,8 @@ plus_saturate(x::Int, y::Int) = max(x, y, x+y)
 # known return type
 isknowntype(@nospecialize T) = (T === ⊥) || isConst(T) || isconcretetype(widenconst(T))
 
-function statement_cost(ex::Expr, line::Int, src::Union{CodeInfo, IRCode}, sptypes::Vector{AbstractLattice},
-                        slottypes::Vector{AbstractLattice}, union_penalties::Bool,
+function statement_cost(ex::Expr, line::Int, src::Union{CodeInfo, IRCode}, sptypes::Lattices,
+                        slottypes::Lattices, union_penalties::Bool,
                         params::OptimizationParams, error_path::Bool = false)
     head = ex.head
     if is_meta_expr_head(head)
@@ -539,8 +539,8 @@ function statement_cost(ex::Expr, line::Int, src::Union{CodeInfo, IRCode}, sptyp
     return 0
 end
 
-function statement_or_branch_cost(@nospecialize(stmt), line::Int, src::Union{CodeInfo, IRCode}, sptypes::Vector{AbstractLattice},
-                                  slottypes::Vector{AbstractLattice}, union_penalties::Bool, params::OptimizationParams)
+function statement_or_branch_cost(@nospecialize(stmt), line::Int, src::Union{CodeInfo, IRCode}, sptypes::Lattices,
+                                  slottypes::Lattices, union_penalties::Bool, params::OptimizationParams)
     thiscost = 0
     dst(tgt) = isa(src, IRCode) ? first(src.cfg.blocks[tgt].stmts) : tgt
     if stmt isa Expr
@@ -569,7 +569,7 @@ function inline_worthy(ir::IRCode,
     return true
 end
 
-function statement_costs!(cost::Vector{Int}, body::Vector{Any}, src::Union{CodeInfo, IRCode}, sptypes::Vector{AbstractLattice}, unionpenalties::Bool, params::OptimizationParams)
+function statement_costs!(cost::Vector{Int}, body::Vector{Any}, src::Union{CodeInfo, IRCode}, sptypes::Lattices, unionpenalties::Bool, params::OptimizationParams)
     maxcost = 0
     for line = 1:length(body)
         stmt = body[line]
@@ -584,7 +584,7 @@ function statement_costs!(cost::Vector{Int}, body::Vector{Any}, src::Union{CodeI
     return maxcost
 end
 
-function is_known_call(e::Expr, @nospecialize(func), src, sptypes::Vector{AbstractLattice}, slottypes::Vector{AbstractLattice} = empty_slottypes)
+function is_known_call(e::Expr, @nospecialize(func), src, sptypes::Lattices, slottypes::Lattices = empty_slottypes)
     if e.head !== :call
         return false
     end

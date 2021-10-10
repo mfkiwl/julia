@@ -41,7 +41,6 @@ end
 const _TOP_PARTIALTYPEVAR_INFO = PartialTypeVarInfo(TypeVar(:⊤))
 
 const _TOP_PARTIALOPAQUE = let
-    @compile
     f = x->x
     f(42)
     m = first(methods(f))
@@ -56,16 +55,6 @@ end
 The lattice for Julia's native type inference implementation.
 `TypeLattice` has following lattice properties and these attributes are combined to create
 a partial lattice whose height is infinite.
-
----
-- `x.causes :: IdSet{InferenceState}` \\
-  If not empty, it indicates the `x` has been approximated due to the "causes".
-  N.B. in the lattice, `x` is epsilon smaller than `ignorelimited(x)` (except `Bottom`)
-
-  See also:
-  - constructor: `LimitedAccuracy(::TypeLattice, ::IdSet{InferenceState})`
-  - property query: `isLimitedAccuracy(x)`
-  - property widening: `ignorelimited(x)`
 
 ---
 - `x.constant::Union{Nothing,Constant}` \\
@@ -147,6 +136,17 @@ a partial lattice whose height is infinite.
   - property query: `isPartialOpaque`
 
 ---
+- `x.causes :: IdSet{InferenceState}` \\
+  If not empty, it indicates the `x` has been approximated due to the "causes".
+  This attribute is only used in abstract interpretation, and not in optimization.
+  N.B. in the lattice, `x` is epsilon smaller than `ignorelimited(x)` (except `⊥`)
+
+  See also:
+  - constructor: `LimitedAccuracy(::TypeLattice, ::IdSet{InferenceState})`
+  - property query: `isLimitedAccuracy(x)`
+  - property widening: `ignorelimited(x)`
+
+---
 - `x.maybeundef :: Bool` \\
   Indicates that this variable may be undefined at this point.
   This attribute is only used in optimization, and not in abstract interpretation.
@@ -162,24 +162,25 @@ a partial lattice whose height is infinite.
 struct TypeLattice <: _AbstractLattice
     typ::Type
 
-    causes::Causes
-    # COMBAK capitalize these field names ?
     constant::Union{Nothing,Constant}
     fields::Fields
     conditional::AnyConditionalInfo
     partialtypevar::PartialTypeVarInfo
     partialopaque::PartialOpaque
 
-    # optimization
+    # abstract interpretation specific attributes
+    causes::Causes
+
+    # optimization specific specific attributes
     maybeundef::Bool
 
     function TypeLattice(@nospecialize(typ);
-                         causes::Causes                     = _TOP_CAUSES,
                          constant::Union{Nothing,Constant}  = nothing,
                          fields::Fields                     = _TOP_FIELDS,
                          conditional::AnyConditionalInfo    = _TOP_CONDITIONAL_INFO,
                          partialtypevar::PartialTypeVarInfo = _TOP_PARTIALTYPEVAR_INFO,
                          partialopaque::PartialOpaque       = _TOP_PARTIALOPAQUE,
+                         causes::Causes                     = _TOP_CAUSES,
                          maybeundef::Bool                   = false,
                          )
         # TODO remove these safe-checks
@@ -187,13 +188,33 @@ struct TypeLattice <: _AbstractLattice
             return typ
         end
         return new(widenconst(typ)::Type,
-                   causes,
                    constant,
                    fields,
                    conditional,
                    partialtypevar,
                    partialopaque,
+                   causes,
                    maybeundef,
+                   )
+    end
+    function TypeLattice(x::TypeLattice;
+                         @nospecialize(typ::Type            = x.typ),
+                         constant::Union{Nothing,Constant}  = x.constant,
+                         fields::Fields                     = x.fields,
+                         conditional::AnyConditionalInfo    = x.conditional,
+                         partialtypevar::PartialTypeVarInfo = x.partialtypevar,
+                         partialopaque::PartialOpaque       = x.partialopaque,
+                         causes::Causes                     = x.causes,
+                         maybeundef::Bool                   = x.maybeundef,
+                         )
+        return new(typ,
+                   constant,
+                   fields,
+                   conditional,
+                   partialtypevar,
+                   partialopaque,
+                   causes,
+                   maybeundef
                    )
     end
 end
@@ -203,20 +224,6 @@ NativeType(@nospecialize typ) = TypeLattice(typ::Type)
 # - `unwraptype`: unwrap `NativeType` to native Julia type
 # - `widenconst`: unwrap any extended type lattice to native Julia type
 unwraptype(@nospecialize t) = (isa(t, TypeLattice) && t === NativeType(t.typ)) ? t.typ : t
-
-function LimitedAccuracy(x::TypeLattice, causes::Causes)
-    @assert !isLimitedAccuracy(x) "nested LimitedAccuracy"
-    @assert !isempty(causes) "malformed LimitedAccuracy"
-    return TypeLattice(x.typ;
-                       causes,
-                       x.constant,
-                       x.fields,
-                       x.conditional,
-                       x.partialtypevar,
-                       x.maybeundef,
-                       )
-end
-isLimitedAccuracy(@nospecialize typ) = isa(typ, TypeLattice) && !isempty(typ.causes)
 
 function Const(@nospecialize val)
     typ = isa(val, Type) ? Type{val} : typeof(val)
@@ -273,6 +280,9 @@ isAnyConditional(@nospecialize typ) = isa(typ, TypeLattice) && (isConditional(ty
 # all usages of this function can be simply replaced with `x.conditional`
 @inline conditional(x::TypeLattice) = x.conditional::ConditionalInfo
 @inline interconditional(x::TypeLattice) = x.conditional::InterConditionalInfo
+widenconditional(@nospecialize typ) = typ
+widenconditional(typ::TypeLattice) = isAnyConditional(typ) ? _widenconditional(typ) : typ
+_widenconditional(typ::TypeLattice) = TypeLattice(typ; conditional = _TOP_CONDITIONAL_INFO)
 
 function PartialTypeVar(
     tv::TypeVar,
@@ -290,28 +300,20 @@ function mkPartialOpaque(@nospecialize(typ), @nospecialize(env), isva::Bool, par
 end
 isPartialOpaque(@nospecialize typ) = isa(typ, TypeLattice) && typ.partialopaque !== _TOP_PARTIALOPAQUE
 
-function MaybeUndef(typ::TypeLattice)
-    return TypeLattice(typ.typ;
-                       typ.causes,
-                       typ.constant,
-                       typ.fields,
-                       typ.conditional,
-                       typ.partialtypevar,
-                       maybeundef = true,
-                       )
+function LimitedAccuracy(x::TypeLattice, causes::Causes)
+    @assert !isLimitedAccuracy(x) "nested LimitedAccuracy"
+    @assert !isempty(causes) "malformed LimitedAccuracy"
+    return TypeLattice(x; causes)
 end
+isLimitedAccuracy(@nospecialize typ) = isa(typ, TypeLattice) && !isempty(typ.causes)
+ignorelimited(@nospecialize typ) = typ
+ignorelimited(typ::TypeLattice) = isLimitedAccuracy(typ) ? _ignorelimited(typ) : typ
+_ignorelimited(typ::TypeLattice) = TypeLattice(typ; causes = _TOP_CAUSES)
+
+MaybeUndef(x::TypeLattice) = TypeLattice(x; maybeundef = true)
 isMaybeUndef(@nospecialize typ) = isa(typ, TypeLattice) && typ.maybeundef
 ignoremaybeundef(@nospecialize typ) = typ
-function ignoremaybeundef(typ::TypeLattice)
-    return TypeLattice(typ.typ;
-                       typ.causes,
-                       typ.constant,
-                       typ.fields,
-                       typ.conditional,
-                       typ.partialtypevar,
-                       maybeundef = false,
-                       )
-end
+ignoremaybeundef(typ::TypeLattice) = TypeLattice(typ; maybeundef = false)
 
 struct StateUpdate
     var::SlotNumber
@@ -552,32 +554,6 @@ end
 
 @inline tchanged(@nospecialize(n), @nospecialize(o)) = o === NOT_FOUND || (n !== NOT_FOUND && !(n ⊑ o))
 @inline schanged(@nospecialize(n), @nospecialize(o)) = (n !== o) && (o === NOT_FOUND || (n !== NOT_FOUND && !issubstate(n::VarState, o::VarState)))
-
-widenconditional(@nospecialize typ) = typ
-widenconditional(typ::TypeLattice) = isAnyConditional(typ) ? _widenconditional(typ) : typ
-function _widenconditional(typ::TypeLattice)
-    return TypeLattice(Bool;
-                       typ.causes,
-                       typ.constant,
-                       typ.fields,
-                       conditional = _TOP_CONDITIONAL_INFO,
-                       typ.partialtypevar,
-                       typ.maybeundef,
-                       )
-end
-
-ignorelimited(@nospecialize typ) = typ
-ignorelimited(typ::TypeLattice) = isLimitedAccuracy(typ) ? _ignorelimited(typ) : typ
-function _ignorelimited(typ::TypeLattice)
-    return TypeLattice(typ.typ;
-                       causes = _TOP_CAUSES,
-                       typ.constant,
-                       typ.fields,
-                       typ.conditional,
-                       typ.partialtypevar,
-                       typ.maybeundef,
-                       )
-end
 
 function stupdate!(state::Nothing, changes::StateUpdate)
     newst = copy(changes.state)

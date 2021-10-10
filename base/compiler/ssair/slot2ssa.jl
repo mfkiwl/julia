@@ -206,7 +206,7 @@ struct DelayedTyp <: _AbstractLattice
 end
 
 # maybe use expr_type?
-function typ_for_val(@nospecialize(x), ci::CodeInfo, sptypes::Vector{AbstractLattice}, idx::Int, slottypes::Vector{AbstractLattice})
+function typ_for_val(@nospecialize(x), ci::CodeInfo, sptypes::Lattices, idx::Int, slottypes::Lattices)
     if isa(x, Expr)
         if x.head === :static_parameter
             return sptypes[x.args[1]]
@@ -553,7 +553,7 @@ function compute_live_ins(cfg::CFG, defuse #=::Union{SlotInfo,SSADefUse}=#)
     BlockLiveness(bb_defs, bb_uses)
 end
 
-function recompute_type(node::Union{PhiNode, PhiCNode}, ci::CodeInfo, ir::IRCode, sptypes::Vector{AbstractLattice}, slottypes::Vector{AbstractLattice})
+function recompute_type(node::Union{PhiNode, PhiCNode}, ci::CodeInfo, ir::IRCode, sptypes::Lattices, slottypes::Lattices)
     new_typ = ⊥
     for i = 1:length(node.values)
         if isa(node, PhiNode) && !isassigned(node.values, i)
@@ -578,7 +578,7 @@ function recompute_type(node::Union{PhiNode, PhiCNode}, ci::CodeInfo, ir::IRCode
 end
 
 function construct_ssa!(ci::CodeInfo, ir::IRCode, domtree::DomTree,
-                        defuses::Vector{SlotInfo}, slottypes::Vector{AbstractLattice})
+                        defuses::Vector{SlotInfo}, slottypes::Lattices)
     code = ir.stmts.inst
     cfg = ir.cfg
     left = Int[]

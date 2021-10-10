@@ -2508,33 +2508,35 @@ end
 # inference lattice
 # =================
 
-function show(io::IO, typ′::CC.TypeLattice)
-    function name(x)
-        if CC.isLimitedAccuracy(typ′)
-            return string(nameof(x), '′')
-        else
-            return string(nameof(x))
-        end
-    end
-    typ = CC.ignorelimited(typ′)
-    if CC.isConditional(typ)
-        show(io, CC.conditional(typ))
-    elseif CC.isConst(typ)
-        print(io, name(CC.Const), '(', CC.constant(typ), ')')
-    elseif CC.isPartialStruct(typ)
-        print(io, name(CC.PartialStruct), '(', CC.widenconst(typ), ", [")
-        n = length(typ.fields)
-        for i in 1:n
-            show(io, typ.fields[i])
-            i == n || print(io, ", ")
-        end
-        print(io, "])")
-    elseif CC.isPartialTypeVar(typ)
-        print(io, name(CC.PartialTypeVar), '(')
-        show(io, typ.partialtypevar.tv)
+function show(io::IO, typ::CC.TypeLattice)
+    if CC.isLimitedAccuracy(typ)
+        print(io, nameof(CC.LimitedAccuracy), '(')
+        show(io, CC.ignorelimited(typ))
+        print(io, ')')
+    elseif CC.isMaybeUndef(typ)
+        print(io, nameof(CC.MaybeUndef), '(')
+        show(io, CC.ignoremaybeundef(typ))
         print(io, ')')
     else
-        print(io, name(CC.NativeType), '(', CC.widenconst(typ), ')')
+        if CC.isConditional(typ)
+            show(io, CC.conditional(typ))
+        elseif CC.isConst(typ)
+            print(io, nameof(CC.Const), '(', CC.constant(typ), ')')
+        elseif CC.isPartialStruct(typ)
+            print(io, nameof(CC.PartialStruct), '(', CC.widenconst(typ), ", [")
+            n = length(typ.fields)
+            for i in 1:n
+                show(io, typ.fields[i])
+                i == n || print(io, ", ")
+            end
+            print(io, "])")
+        elseif CC.isPartialTypeVar(typ)
+            print(io, nameof(CC.PartialTypeVar), '(')
+            show(io, typ.partialtypevar.tv)
+            print(io, ')')
+        else
+            print(io, nameof(CC.NativeType), '(', CC.widenconst(typ), ')')
+        end
     end
 end
 

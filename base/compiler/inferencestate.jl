@@ -24,8 +24,8 @@ mutable struct InferenceState
     params::InferenceParams
     result::InferenceResult # remember where to put the result
     linfo::MethodInstance
-    sptypes::Vector{AbstractLattice}    # types of static parameter
-    slottypes::Vector{AbstractLattice}
+    sptypes::Lattices    # types of static parameter
+    slottypes::Lattices
     mod::Module
     currpc::LineNum
     pclimitations::IdSet{InferenceState} # causes of precision restrictions (LimitedAccuracy) on currpc ssavalue
@@ -79,7 +79,7 @@ mutable struct InferenceState
         sp = sptypes_from_meth_instance(linfo::MethodInstance)
 
         nssavalues = src.ssavaluetypes::Int
-        # NOTE we can't initialize `src.ssavaluetypes` as `Vector{AbstractLattice}` to avoid
+        # NOTE we can't initialize `src.ssavaluetypes` as `Lattices` to avoid
         # an allocation within `ir_to_codeinf!(src)` where we widen all ssavaluetypes to native Julia types
         src.ssavaluetypes = Any[ NOT_FOUND for i = 1:nssavalues ]
         stmt_info = Any[ nothing for i = 1:length(code) ]
@@ -93,7 +93,7 @@ mutable struct InferenceState
         argtypes = result.argtypes
         nargs = length(argtypes)
         s_argtypes = VarTable(undef, nslots)
-        slottypes = Vector{AbstractLattice}(undef, nslots)
+        slottypes = Lattices(undef, nslots)
         for i in 1:nslots
             at = (i > nargs) ? ⊥ : TypeLattice(argtypes[i])
             s_argtypes[i] = VarState(at, i > nargs)

@@ -19,14 +19,14 @@ being used for this purpose alone.
 module Timings
 
 using Core.Compiler: -, +, :, Vector, length, first, empty!, push!, pop!, @inline,
-    @inbounds, copy, backtrace, AbstractLattice
+    @inbounds, copy, backtrace, AbstractLattice, Lattices
 
 # What we record for any given frame we infer during type inference.
 struct InferenceFrameInfo
     mi::Core.MethodInstance
     world::UInt64
-    sptypes::Vector{AbstractLattice}
-    slottypes::Vector{AbstractLattice}
+    sptypes::Lattices
+    slottypes::Lattices
     nargs::Int
 end
 
@@ -83,7 +83,7 @@ function reset_timings()
     empty!(_timings)
     push!(_timings, Timing(
         # The MethodInstance for ROOT(), and default empty values for other fields.
-        InferenceFrameInfo(ROOTmi, 0x0, AbstractLattice[], AbstractLattice[Core.Compiler.Const(ROOT)], 1),
+        InferenceFrameInfo(ROOTmi, 0x0, Lattices(), AbstractLattice[Core.Compiler.Const(ROOT)], 1),
         _time_ns()))
     return nothing
 end
@@ -342,7 +342,7 @@ function maybe_compress_codeinfo(interp::AbstractInterpreter, linfo::MethodInsta
     if cache_the_tree
         if may_compress(interp)
             nslots = length(ci.slotflags)
-            resize!(ci.slottypes::Vector{AbstractLattice}, nslots)
+            resize!(ci.slottypes::Lattices, nslots)
             resize!(ci.slotnames, nslots)
             return ccall(:jl_compress_ir, Vector{UInt8}, (Any, Any), def, ci)
         else
@@ -573,7 +573,7 @@ function record_slot_assign!(sv::InferenceState)
     # to compute a lower bound on the storage required
     states = sv.stmt_types
     body = sv.src.code::Vector{Any}
-    slottypes = sv.slottypes::Vector{AbstractLattice}
+    slottypes = sv.slottypes::Lattices
     ssavaluetypes = sv.src.ssavaluetypes::SSAValueTypes
     for i = 1:length(body)
         expr = body[i]

@@ -117,6 +117,7 @@ abstract type _AbstractLattice end
 const AbstractLattice = Union{
     TypeofVararg,
     _AbstractLattice}
+const Lattices = Vector{AbstractLattice}
 
 macro latticeop(mode, def)
     @assert is_function_def(def)
@@ -138,7 +139,7 @@ macro latticeop(mode, def)
     end
     return esc(Expr(def.head, sig, body))
 end
-anymap(f::Function, a::Vector{AbstractLattice}) = Any[ f(a[i]) for i in 1:length(a) ]
+anymap(f::Function, a::Lattices) = Any[ f(a[i]) for i in 1:length(a) ]
 
 include("compiler/cicache.jl")
 include("compiler/types.jl")

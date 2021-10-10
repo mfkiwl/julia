@@ -3,7 +3,7 @@
 """
 Determine whether a statement is side-effect-free, i.e. may be removed if it has no uses.
 """
-function stmt_effect_free(@nospecialize(stmt), @nospecialize(rt), src, sptypes::Vector{AbstractLattice})
+function stmt_effect_free(@nospecialize(stmt), @nospecialize(rt), src, sptypes::Lattices)
     isa(stmt, PiNode) && return true
     isa(stmt, PhiNode) && return true
     isa(stmt, ReturnNode) && return false
@@ -90,7 +90,7 @@ end
     end
     return argextype(value, compact.ir, compact.ir.sptypes)
 end
-@latticeop ret argextype(@nospecialize(value), compact::IncrementalCompact, sptypes::Vector{AbstractLattice}) = compact_exprtype(compact, value)
+@latticeop ret argextype(@nospecialize(value), compact::IncrementalCompact, sptypes::Lattices) = compact_exprtype(compact, value)
 
 is_tuple_call(ir::IRCode, @nospecialize(def)) = isa(def, Expr) && is_known_call(def, tuple, ir, ir.sptypes)
 is_tuple_call(compact::IncrementalCompact, @nospecialize(def)) = isa(def, Expr) && is_known_call(def, tuple, compact)

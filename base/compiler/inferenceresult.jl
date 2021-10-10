@@ -13,7 +13,7 @@ end
 # for the provided `linfo` and `given_argtypes`. The purpose of this function is
 # to return a valid value for `cache_lookup(linfo, argtypes, cache).argtypes`,
 # so that we can construct cache-correct `InferenceResult`s in the first place.
-function matching_cache_argtypes(linfo::MethodInstance, given_argtypes::Vector{AbstractLattice}, va_override::Bool)
+function matching_cache_argtypes(linfo::MethodInstance, given_argtypes::Lattices, va_override::Bool)
     @assert isa(linfo.def, Method) # ensure the next line works
     nargs::Int = linfo.def.nargs
     given_argtypes = AbstractLattice[widenconditional(a) for a in given_argtypes]
@@ -56,7 +56,7 @@ function most_general_argtypes(method::Union{Method, Nothing}, @nospecialize(spe
         # For opaque closure, the closure environment is processed elsewhere
         nargs -= 1
     end
-    cache_argtypes = Vector{AbstractLattice}(undef, nargs)
+    cache_argtypes = Lattices(undef, nargs)
     # First, if we're dealing with a varargs method, then we set the last element of `args`
     # to the appropriate `Tuple` type or `PartialStruct` instance.
     if !toplevel && isva
@@ -141,7 +141,7 @@ function matching_cache_argtypes(linfo::MethodInstance, ::Nothing, va_override::
     return cache_argtypes, falses(length(cache_argtypes))
 end
 
-function cache_lookup(linfo::MethodInstance, given_argtypes::Vector{AbstractLattice}, cache::Vector{InferenceResult})
+function cache_lookup(linfo::MethodInstance, given_argtypes::Lattices, cache::Vector{InferenceResult})
     method = linfo.def::Method
     nargs::Int = method.nargs
     method.isva && (nargs -= 1)

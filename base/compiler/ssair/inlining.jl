@@ -12,7 +12,7 @@ end
 struct Signature
     f::Any
     ft::Any
-    atypes::Vector{AbstractLattice}
+    atypes::Lattices
     atype::Type
     Signature(f, ft, atypes) = new(f, ft, atypes)
     Signature(f, ft, atypes, atype) = new(f, ft, atypes, atype)
@@ -34,7 +34,7 @@ end
 """
 struct DelayedInliningSpec
     match::Union{MethodMatch, InferenceResult}
-    atypes::Vector{AbstractLattice}
+    atypes::Lattices
     stmttype::Any
 end
 
@@ -43,9 +43,9 @@ struct InliningTodo
     mi::MethodInstance
     spec::Union{ResolvedInliningSpec, DelayedInliningSpec}
 end
-InliningTodo(mi::MethodInstance, match::MethodMatch, atypes::Vector{AbstractLattice}, @nospecialize(stmttype)) =
+InliningTodo(mi::MethodInstance, match::MethodMatch, atypes::Lattices, @nospecialize(stmttype)) =
     InliningTodo(mi, DelayedInliningSpec(match, atypes, stmttype))
-InliningTodo(result::InferenceResult, atypes::Vector{AbstractLattice}, @nospecialize(stmttype)) =
+InliningTodo(result::InferenceResult, atypes::Lattices, @nospecialize(stmttype)) =
     InliningTodo(result.linfo, DelayedInliningSpec(result, atypes, stmttype))
 
 struct ConstantCase
@@ -615,7 +615,7 @@ end
 
 # This assumes the caller has verified that all arguments to the _apply_iterate call are Tuples.
 function rewrite_apply_exprargs!(ir::IRCode, todo::Vector{Pair{Int, Any}}, idx::Int,
-        argexprs::Vector{Any}, atypes::Vector{AbstractLattice}, arginfos::Vector{Any},
+        argexprs::Vector{Any}, atypes::Lattices, arginfos::Vector{Any},
         arg_start::Int, istate::InliningState)
 
     flag = ir.stmts[idx][:flag]
@@ -631,7 +631,7 @@ function rewrite_apply_exprargs!(ir::IRCode, todo::Vector{Pair{Int, Any}}, idx::
                 # def_type.typ <: Tuple is assumed
                 def_atypes = AbstractLattice[TypeLattice(t) for t in def_type.fields]
             else
-                def_atypes = AbstractLattice[]
+                def_atypes = Lattices()
                 if isConst(def_type) # && isa(constant(def_type), Union{Tuple, SimpleVector}) is implied
                     for p in constant(def_type)
                         push!(def_atypes, Const(p))
@@ -791,7 +791,7 @@ function validate_sparams(sparams::SimpleVector)
     return true
 end
 
-function analyze_method!(match::MethodMatch, atypes::Vector{AbstractLattice},
+function analyze_method!(match::MethodMatch, atypes::Lattices,
                          state::InliningState, @nospecialize(stmttyp), flag::UInt8)
     method = match.method
     methsig = method.sig
@@ -923,7 +923,7 @@ function call_sig(ir::IRCode, stmt::Expr)
     f = singleton_type(ft)
     f === Core.Intrinsics.llvmcall && return nothing
     f === Core.Intrinsics.cglobal && return nothing
-    atypes = Vector{AbstractLattice}(undef, length(stmt.args))
+    atypes = Lattices(undef, length(stmt.args))
     atypes[1] = ft
     for i = 2:length(stmt.args)
         a = argextype(stmt.args[i], ir, ir.sptypes)

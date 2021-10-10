@@ -228,9 +228,9 @@ end
 
 argextype(@nospecialize(x), state) = argextype(x, state.src, state.sptypes, state.slottypes)
 
-const empty_slottypes = AbstractLattice[]
+const empty_slottypes = Lattices()
 
-@latticeop ret function argextype(@nospecialize(x), src, sptypes::Vector{AbstractLattice}, slottypes::Vector{AbstractLattice} = empty_slottypes)
+@latticeop ret function argextype(@nospecialize(x), src, sptypes::Lattices, slottypes::Lattices = empty_slottypes)
     if isa(x, Expr)
         if x.head === :static_parameter
             return sptypes[x.args[1]::Int]

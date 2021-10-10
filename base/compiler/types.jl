@@ -24,13 +24,13 @@ A type that represents the result of running type inference on a chunk of code.
 """
 mutable struct InferenceResult
     linfo::MethodInstance
-    argtypes::Vector{AbstractLattice}
+    argtypes::Lattices
     overridden_by_const::BitVector
     result # ::Type, or InferenceState if WIP
     src #::Union{CodeInfo, OptimizationState, Nothing} # if inferred copy is available
     valid_worlds::WorldRange # if inference and optimization is finished
     function InferenceResult(linfo::MethodInstance;
-                             argtypes::Union{Nothing,Vector{AbstractLattice}} = nothing,
+                             argtypes::Union{Nothing,Lattices} = nothing,
                              va_override::Bool = false)
         argtypes, overridden_by_const = matching_cache_argtypes(linfo, argtypes, va_override)
         return new(linfo, argtypes, overridden_by_const, Any, nothing, WorldRange())

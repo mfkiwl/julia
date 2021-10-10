@@ -187,7 +187,7 @@ non_effect_free(inst::NewInstruction) =
 
 struct InstructionStream
     inst::Vector{Any}
-    type::Vector{AbstractLattice}
+    type::Lattices
     info::Vector{Any}
     line::Vector{Int32}
     flag::Vector{UInt8}
@@ -282,14 +282,14 @@ copy(nns::NewNodeStream) = NewNodeStream(copy(nns.stmts), copy(nns.info))
 
 struct IRCode
     stmts::InstructionStream
-    argtypes::Vector{AbstractLattice}
-    sptypes::Vector{AbstractLattice}
+    argtypes::Lattices
+    sptypes::Lattices
     linetable::Vector{LineInfoNode}
     cfg::CFG
     new_nodes::NewNodeStream
     meta::Vector{Any}
 
-    function IRCode(stmts::InstructionStream, cfg::CFG, linetable::Vector{LineInfoNode}, argtypes::Vector{AbstractLattice}, meta::Vector{Any}, sptypes::Vector{AbstractLattice})
+    function IRCode(stmts::InstructionStream, cfg::CFG, linetable::Vector{LineInfoNode}, argtypes::Lattices, meta::Vector{Any}, sptypes::Lattices)
         return new(stmts, argtypes, sptypes, linetable, cfg, NewNodeStream(), meta)
     end
     function IRCode(ir::IRCode, stmts::InstructionStream, cfg::CFG, new_nodes::NewNodeStream)

@@ -53,7 +53,7 @@ has_concrete_subtype(d::DataType) = d.flags & 0x20 == 0x20
 # certain combinations of `a` and `b` where one/both isa/are `Union`/`UnionAll` type(s)s.
 isnotbrokensubtype(@nospecialize(a), @nospecialize(b)) = (!iskindtype(b) || !isType(a) || hasuniquerep(a.parameters[1]) || b <: a)
 
-argtypes_to_type(argtypes::Vector{AbstractLattice}) = Tuple{anymap(widenconst, argtypes)...}
+argtypes_to_type(argtypes::Lattices) = Tuple{anymap(widenconst, argtypes)...}
 
 function isknownlength(t::DataType)
     isvatuple(t) || return true
@@ -204,7 +204,7 @@ end
 # or outside of the Tuple/Union nesting, though somewhat more expensive to be
 # outside than inside because the representation is larger (because and it
 # informs the callee whether any splitting is possible).
-function unionsplitcost(atypes::Union{SimpleVector,Vector{AbstractLattice}})
+function unionsplitcost(atypes::Union{SimpleVector,Lattices})
     nu = 1
     max = 2
     for ti in atypes
@@ -247,8 +247,8 @@ function _switchtupleunion(t::Vector{Any}, i::Int, tunion::Vector{Any}, @nospeci
     return tunion
 end
 
-switchtupleunion(argtypes::Vector{AbstractLattice}) = _switchtupleunion(argtypes, length(argtypes), Vector{AbstractLattice}[])
-function _switchtupleunion(t::Vector{AbstractLattice}, i::Int, tunion::Vector{Vector{AbstractLattice}})
+switchtupleunion(argtypes::Lattices) = _switchtupleunion(argtypes, length(argtypes), Lattices[])
+function _switchtupleunion(t::Lattices, i::Int, tunion::Vector{Lattices})
     if i == 0
         push!(tunion, copy(t))
     else

@@ -10,7 +10,7 @@ function inflate_ir(ci::CodeInfo, linfo::MethodInstance)
     return inflate_ir(ci, sptypes, argtypes)
 end
 
-function inflate_ir(ci::CodeInfo, sptypes::Vector{AbstractLattice}, argtypes::Vector{AbstractLattice})
+function inflate_ir(ci::CodeInfo, sptypes::Lattices, argtypes::Lattices)
     code = copy_exprargs(ci.code) # TODO: this is a huge hot-spot
     cfg = compute_basic_blocks(code)
     for i = 1:length(code)
@@ -76,4 +76,4 @@ function replace_code_newstyle!(ci::CodeInfo, ir::IRCode, nargs::Int)
 end
 
 # used by some tests
-inflate_ir(ci::CodeInfo) = inflate_ir(ci, AbstractLattice[], AbstractLattice[ ⊤ for i = 1:length(ci.slotflags) ])
+inflate_ir(ci::CodeInfo) = inflate_ir(ci, Lattices(), AbstractLattice[ ⊤ for i = 1:length(ci.slotflags) ])
