@@ -411,8 +411,6 @@ function lift_leaves(compact::IncrementalCompact,
     return lifted_leaves, maybe_undef
 end
 
-make_MaybeUndef(@nospecialize(typ)) = isa(typ, MaybeUndef) ? typ : MaybeUndef(typ)
-
 function lift_comparison!(compact::IncrementalCompact, idx::Int,
         @nospecialize(c1), @nospecialize(c2), stmt::Expr,
         lifting_cache::IdDict{Pair{AnySSAValue, Any}, AnySSAValue})
@@ -732,7 +730,7 @@ function getfield_elim_pass!(ir::IRCode)
         lifted_leaves, any_undef = r
 
         if any_undef
-            result_t = make_MaybeUndef(result_t)
+            result_t = MaybeUndef(result_t)
         end
 
 #        @Base.show result_t
@@ -1064,7 +1062,7 @@ function type_lift_pass!(ir::IRCode)
                         else
                             up_id = id = (def.values[i]::SSAValue).id
                             @label restart
-                            if !isa(ir.stmts[id][:type], MaybeUndef)
+                            if !isMaybeUndef(ir.stmts[id][:type])
                                 val = true
                             else
                                 node = insts[id][:inst]

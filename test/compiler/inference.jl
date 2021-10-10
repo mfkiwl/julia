@@ -637,7 +637,6 @@ for (codetype, all_ssa) in Any[
         e = code.code[i]
         notconst(e)
         typ = code.ssavaluetypes[i]
-        typ isa Core.Compiler.MaybeUndef && (typ = typ.typ)
         @test isa(typ, Type) || isa(typ, TypeLattice)
     end
     test_inferred_static(codetype, all_ssa)

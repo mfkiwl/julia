@@ -147,9 +147,21 @@ a partial lattice whose height is infinite.
   - property query: `isPartialOpaque`
 
 ---
+- `x.maybeundef :: Bool` \\
+  Indicates that this variable may be undefined at this point.
+  This attribute is only used in optimization, and not in abstract interpretation.
+  N.B. in the lattice, `x` is epsilon bigger than `ignoremaybeundef(x)`.
+
+  See also:
+  - constructor: `MaybeUndef(::TypeLattice)`
+  - property query: `isMaybeUndef(x)`
+  - property widening: `ignoremaybeundef(x)`
+
+---
 """
 struct TypeLattice <: _AbstractLattice
     typ::Type
+
     causes::Causes
     # COMBAK capitalize these field names ?
     constant::Union{Nothing,Constant}
@@ -158,6 +170,9 @@ struct TypeLattice <: _AbstractLattice
     partialtypevar::PartialTypeVarInfo
     partialopaque::PartialOpaque
 
+    # optimization
+    maybeundef::Bool
+
     function TypeLattice(@nospecialize(typ);
                          causes::Causes                     = _TOP_CAUSES,
                          constant::Union{Nothing,Constant}  = nothing,
@@ -165,11 +180,10 @@ struct TypeLattice <: _AbstractLattice
                          conditional::AnyConditionalInfo    = _TOP_CONDITIONAL_INFO,
                          partialtypevar::PartialTypeVarInfo = _TOP_PARTIALTYPEVAR_INFO,
                          partialopaque::PartialOpaque       = _TOP_PARTIALOPAQUE,
+                         maybeundef::Bool                   = false,
                          )
         # TODO remove these safe-checks
-        if isa(typ, TypeLattice)
-            return typ
-        elseif isa(typ, CompilerTypes)
+        if isa(typ, CompilerTypes)
             return typ
         end
         return new(widenconst(typ)::Type,
@@ -179,6 +193,7 @@ struct TypeLattice <: _AbstractLattice
                    conditional,
                    partialtypevar,
                    partialopaque,
+                   maybeundef,
                    )
     end
 end
@@ -198,6 +213,7 @@ function LimitedAccuracy(x::TypeLattice, causes::Causes)
                        x.fields,
                        x.conditional,
                        x.partialtypevar,
+                       x.maybeundef,
                        )
 end
 isLimitedAccuracy(@nospecialize typ) = isa(typ, TypeLattice) && !isempty(typ.causes)
@@ -274,12 +290,27 @@ function mkPartialOpaque(@nospecialize(typ), @nospecialize(env), isva::Bool, par
 end
 isPartialOpaque(@nospecialize typ) = isa(typ, TypeLattice) && typ.partialopaque !== _TOP_PARTIALOPAQUE
 
-# Wraps a type and represents that the value may also be undef at this point.
-# (only used in optimize, not abstractinterpret)
-# N.B. in the lattice, this is epsilon bigger than `typ` (even Any)
-struct MaybeUndef <: _AbstractLattice
-    typ
-    MaybeUndef(@nospecialize(typ)) = new(typ)
+function MaybeUndef(typ::TypeLattice)
+    return TypeLattice(typ.typ;
+                       typ.causes,
+                       typ.constant,
+                       typ.fields,
+                       typ.conditional,
+                       typ.partialtypevar,
+                       maybeundef = true,
+                       )
+end
+isMaybeUndef(@nospecialize typ) = isa(typ, TypeLattice) && typ.maybeundef
+ignoremaybeundef(@nospecialize typ) = typ
+function ignoremaybeundef(typ::TypeLattice)
+    return TypeLattice(typ.typ;
+                       typ.causes,
+                       typ.constant,
+                       typ.fields,
+                       typ.conditional,
+                       typ.partialtypevar,
+                       maybeundef = false,
+                       )
 end
 
 struct StateUpdate
@@ -314,10 +345,7 @@ const NOT_FOUND = NotFound()
 const SSAValueTypes = Vector{Any}
 const SSAValueType  = Union{NotFound,AbstractLattice} # element
 
-const CompilerTypes = Union{
-    MaybeUndef,
-    TypeofVararg,
-}
+const CompilerTypes = Union{TypeofVararg,}
 x::CompilerTypes == y::CompilerTypes = x === y
 x::Type == y::CompilerTypes = false
 x::CompilerTypes == y::Type = false
@@ -386,11 +414,9 @@ function ⊑(@nospecialize(a), @nospecialize(b))
     if isLimitedAccuracy(a)
         a = unwraptype(_ignorelimited(a))
     end
-    if isa(a, MaybeUndef) && !isa(b, MaybeUndef)
+    if isMaybeUndef(a) && !isMaybeUndef(b)
         return false
     end
-    isa(a, MaybeUndef) && (a = a.typ)
-    isa(b, MaybeUndef) && (b = b.typ)
     b === Any && return true
     a === Any && return false
     a === Union{} && return true
@@ -509,7 +535,6 @@ function is_lattice_equal(@nospecialize(a), @nospecialize(b))
 end
 
 widenconst(x::TypeLattice) = x.typ
-widenconst(m::MaybeUndef) = widenconst(m.typ)
 widenconst(t::Type) = t
 widenconst(t::TypeVar) = t
 widenconst(t::Core.TypeofVararg) = t
@@ -536,7 +561,9 @@ function _widenconditional(typ::TypeLattice)
                        typ.constant,
                        typ.fields,
                        conditional = _TOP_CONDITIONAL_INFO,
-                       typ.partialtypevar)
+                       typ.partialtypevar,
+                       typ.maybeundef,
+                       )
 end
 
 ignorelimited(@nospecialize typ) = typ
@@ -548,6 +575,7 @@ function _ignorelimited(typ::TypeLattice)
                        typ.fields,
                        typ.conditional,
                        typ.partialtypevar,
+                       typ.maybeundef,
                        )
 end
 

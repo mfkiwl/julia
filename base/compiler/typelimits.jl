@@ -321,10 +321,8 @@ function _tmerge(@nospecialize(typea), @nospecialize(typeb))
         return LimitedAccuracy(tmerge(typea, _ignorelimited(typeb)), typeb.causes)
     end
     # type-lattice for MaybeUndef wrapper
-    if isa(typea, MaybeUndef) || isa(typeb, MaybeUndef)
-        return MaybeUndef(tmerge(
-            isa(typea, MaybeUndef) ? typea.typ : typea,
-            isa(typeb, MaybeUndef) ? typeb.typ : typeb))
+    if isMaybeUndef(typea) || isMaybeUndef(typeb)
+        return MaybeUndef(tmerge(ignoremaybeundef(typea), ignoremaybeundef(typeb)))
     end
     # type-lattice for Conditional wrapper
     if isConditional(typea) && !isConditional(typeb) && isConst(typeb)
