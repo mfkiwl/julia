@@ -6,7 +6,8 @@ using Core.Intrinsics, Core.IR
 
 import Core: print, println, show, write, unsafe_write, stdout, stderr,
              _apply_iterate, svec, apply_type, Builtin, IntrinsicFunction,
-             MethodInstance, CodeInstance, MethodMatch, PartialOpaque
+             MethodInstance, CodeInstance, MethodMatch, PartialOpaque,
+             TypeofVararg
 
 const getproperty = Core.getfield
 const setproperty! = Core.setfield!
@@ -112,13 +113,8 @@ something(x::Any, y...) = x
 ############
 
 # TODO remove me in the future, this is just to check the coverage of the overhaul
-import Core: TypeofVararg
-abstract type _AbstractLattice end
-const AbstractLattice = Union{
-    TypeofVararg,
-    _AbstractLattice}
+abstract type AbstractLattice end
 const Lattices = Vector{AbstractLattice}
-
 macro latticeop(mode, def)
     @assert is_function_def(def)
     sig, body = def.args

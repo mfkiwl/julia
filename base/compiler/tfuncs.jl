@@ -555,11 +555,9 @@ function typeof_tfunc(@nospecialize(t))
             return Type{<:t}
         end
     elseif isa(t, Union)
-        a = widenconst(typeof_tfunc(t.a))
-        b = widenconst(typeof_tfunc(t.b))
+        a = widenconst(_typeof_tfunc(t.a))
+        b = widenconst(_typeof_tfunc(t.b))
         return Union{a, b}
-    elseif isa(t, TypeVar) && !(Any === t.ub)
-        return typeof_tfunc(t.ub)
     elseif isa(t, UnionAll)
         u = unwrap_unionall(t)
         if isa(u, DataType) && !isabstracttype(u)
@@ -575,6 +573,13 @@ function typeof_tfunc(@nospecialize(t))
         return rewrap_unionall(widenconst(typeof_tfunc(u)), t)
     end
     return DataType # typeof(anything)::DataType
+end
+# helper function of `typeof_tfunc`, which accepts `TypeVar`
+function _typeof_tfunc(@nospecialize(t))
+    if isa(t, TypeVar)
+        return t.ub !== Any ? _typeof_tfunc(t.ub) : DataType
+    end
+    return typeof_tfunc(t)
 end
 add_tfunc(typeof, 1, 1, typeof_tfunc, 1)
 
@@ -1276,7 +1281,7 @@ function apply_type_tfunc(@nospecialize(headtypetype), @nospecialize args...)
         return Any
     end
     if !isempty(args) && isvarargtype(args[end])
-        return isvarargtype(headtype) ? Core.TypeofVararg : Type
+        return isvarargtype(headtype) ? TypeofVararg : Type
     end
     largs = length(args)
     if headtype === Union
@@ -1339,7 +1344,7 @@ function apply_type_tfunc(@nospecialize(headtypetype), @nospecialize args...)
             push!(tparams, aip1)
         elseif isConst(ai) && begin
                    aival = constant(ai)
-                   isa(aival, Type) || isa(aival, TypeVar) || valid_tparam(aival) || (istuple && isa(aival, Core.TypeofVararg))
+                   isa(aival, Type) || isa(aival, TypeVar) || valid_tparam(aival) || (istuple && isvarargtype(aival))
                end
             push!(tparams, aival)
         elseif isPartialTypeVar(ai)
@@ -1406,11 +1411,11 @@ function apply_type_tfunc(@nospecialize(headtypetype), @nospecialize args...)
     catch ex
         # type instantiation might fail if one of the type parameters
         # doesn't match, which could happen if a type estimate is too coarse
-        return isvarargtype(headtype) ? Core.TypeofVararg : Type{<:headtype}
+        return isvarargtype(headtype) ? TypeofVararg : Type{<:headtype}
     end
     !uncertain && canconst && return Const(appl)
     if isvarargtype(appl)
-        return Core.TypeofVararg
+        return TypeofVararg
     end
     if istuple
         return Type{<:appl}
@@ -1431,6 +1436,7 @@ end
 
 # convert the dispatch tuple type argtype to the real (concrete) type of
 # the tuple of those values
+tuple_tfunc(atypes::Lattices) = tuple_tfunc(Any[a for a in atypes])
 function tuple_tfunc(atypes::Vector{Any})
     atypes = anymap(widenconditional, atypes)
     all_are_const = true
@@ -1450,29 +1456,33 @@ function tuple_tfunc(atypes::Vector{Any})
         if has_struct_const_info(x)
             anyinfo = true
         else
-            atypes[i] = x = widenconst(x)
+            if isVararg(x)
+                atypes[i] = x
+            else
+                atypes[i] = x = widenconst(x)
+            end
         end
         if isConst(x)
             params[i] = typeof(constant(x))
         else
-            x = widenconst(x)
-            if isType(x)
+            t = isVararg(x) ? vararg(x) : widenconst(x)
+            if isType(t)
                 anyinfo = true
-                xparam = x.parameters[1]
-                if hasuniquerep(xparam) || xparam === Bottom
-                    params[i] = typeof(xparam)
+                tparam = t.parameters[1]
+                if hasuniquerep(tparam) || tparam === Bottom
+                    params[i] = typeof(tparam)
                 else
                     params[i] = Type
                 end
             else
-                params[i] = x
+                params[i] = t
             end
         end
     end
     typ = Tuple{params...}
     # replace a singleton type with its equivalent Const object
     isdefined(typ, :instance) && return Const(typ.instance)
-    return anyinfo ? PartialStruct(typ, atypes) : typ
+    return anyinfo ? PartialStruct(typ, atypes) : NativeType(typ)
 end
 
 function arrayref_tfunc(@nospecialize(boundscheck), @nospecialize(a), @nospecialize i...)
@@ -1644,7 +1654,7 @@ function builtin_tfunction(interp::AbstractInterpreter, @nospecialize(f), argtyp
         tf = T_FFUNC_VAL[fidx]
     end
     tf = tf::Tuple{Int, Int, Any}
-    if !isempty(argtypes) && isvarargtype(argtypes[end])
+    if !isempty(argtypes) && isVararg(argtypes[end])
         if length(argtypes) - 1 > tf[2]
             # definitely too many arguments
             return Bottom
@@ -1652,7 +1662,7 @@ function builtin_tfunction(interp::AbstractInterpreter, @nospecialize(f), argtyp
         if length(argtypes) - 1 == tf[2]
             argtypes = argtypes[1:end-1]
         else
-            vatype = argtypes[end]::Core.TypeofVararg
+            vatype = vararg(argtypes[end])
             argtypes = argtypes[1:end-1]
             while length(argtypes) < tf[1]
                 push!(argtypes, unwrapva(vatype))

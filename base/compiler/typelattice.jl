@@ -38,7 +38,7 @@ struct PartialTypeVarInfo
     tv::TypeVar
     PartialTypeVarInfo(tv::TypeVar) = new(tv)
 end
-const Special = Union{PartialTypeVarInfo, PartialOpaque}
+const Special = Union{PartialTypeVarInfo, PartialOpaque, Core.TypeofVararg}
 const _TOP_SPECIAL = PartialTypeVarInfo(TypeVar(:⊤))
 
 """
@@ -145,7 +145,7 @@ a partial lattice whose height is infinite.
 
 ---
 """
-struct TypeLattice <: _AbstractLattice
+struct TypeLattice <: AbstractLattice
     typ::Type
 
     constant::Union{Nothing,Constant}
@@ -160,18 +160,14 @@ struct TypeLattice <: _AbstractLattice
     maybeundef::Bool
 
     function TypeLattice(@nospecialize(typ);
-                         constant::Union{Nothing,Constant}  = nothing,
-                         fields::Fields                     = _TOP_FIELDS,
-                         conditional::AnyConditionalInfo    = _TOP_CONDITIONAL_INFO,
-                         special::Special                   = _TOP_SPECIAL,
-                         causes::Causes                     = _TOP_CAUSES,
-                         maybeundef::Bool                   = false,
+                         constant::Union{Nothing,Constant} = nothing,
+                         fields::Fields                    = _TOP_FIELDS,
+                         conditional::AnyConditionalInfo   = _TOP_CONDITIONAL_INFO,
+                         special::Special                  = _TOP_SPECIAL,
+                         causes::Causes                    = _TOP_CAUSES,
+                         maybeundef::Bool                  = false,
                          )
-        # TODO remove these safe-checks
-        if isa(typ, CompilerTypes)
-            return typ
-        end
-        return new(widenconst(typ)::Type,
+        return new(typ::Type,
                    constant,
                    fields,
                    conditional,
@@ -181,13 +177,13 @@ struct TypeLattice <: _AbstractLattice
                    )
     end
     function TypeLattice(x::TypeLattice;
-                         @nospecialize(typ::Type            = x.typ),
-                         constant::Union{Nothing,Constant}  = x.constant,
-                         fields::Fields                     = x.fields,
-                         conditional::AnyConditionalInfo    = x.conditional,
-                         special::Special                   = x.special,
-                         causes::Causes                     = x.causes,
-                         maybeundef::Bool                   = x.maybeundef,
+                         @nospecialize(typ::Type           = x.typ),
+                         constant::Union{Nothing,Constant} = x.constant,
+                         fields::Fields                    = x.fields,
+                         conditional::AnyConditionalInfo   = x.conditional,
+                         special::Special                  = x.special,
+                         causes::Causes                    = x.causes,
+                         maybeundef::Bool                  = x.maybeundef,
                          )
         return new(typ,
                    constant,
@@ -285,6 +281,13 @@ end
 isPartialOpaque(@nospecialize typ) = isa(typ, TypeLattice) && isa(typ.special, PartialOpaque)
 @inline partialopaque(typ::TypeLattice) = typ.special::PartialOpaque
 
+function mkVararg(vararg::TypeofVararg)
+    # COMBAK what `typ` should this have ?
+    return TypeLattice(Any; special = vararg)
+end
+isVararg(@nospecialize typ) = isa(typ, TypeLattice) && isa(typ.special, TypeofVararg)
+@inline vararg(typ::TypeLattice) = typ.special::TypeofVararg
+
 function LimitedAccuracy(x::TypeLattice, causes::Causes)
     @assert !isLimitedAccuracy(x) "nested LimitedAccuracy"
     @assert !isempty(causes) "malformed LimitedAccuracy"
@@ -332,14 +335,6 @@ const NOT_FOUND = NotFound()
 const SSAValueTypes = Vector{Any}
 const SSAValueType  = Union{NotFound,AbstractLattice} # element
 
-const CompilerTypes = Union{TypeofVararg,}
-x::CompilerTypes == y::CompilerTypes = x === y
-x::Type == y::CompilerTypes = false
-x::CompilerTypes == y::Type = false
-
-x::TypeLattice == y::TypeLattice = x.typ == y.typ
-x::TypeLattice == y::CompilerTypes = false
-x::CompilerTypes == y::TypeLattice = false
 # allow comparison with unwrapped types (TODO remove me, this is just for prototyping)
 x::Type == y::TypeLattice = x === unwraptype(y)
 x::TypeLattice == y::Type = unwraptype(x) === y
@@ -521,10 +516,8 @@ function is_lattice_equal(@nospecialize(a), @nospecialize(b))
     return a ⊑ b && b ⊑ a
 end
 
-widenconst(x::TypeLattice) = x.typ
+widenconst(x::TypeLattice) = (@assert !isVararg(x) "unhandled Vararg"; x.typ)
 widenconst(t::Type) = t
-widenconst(t::TypeVar) = t
-widenconst(t::Core.TypeofVararg) = t
 
 issubstate(a::VarState, b::VarState) = (a.typ ⊑ b.typ && a.undef <= b.undef)
 

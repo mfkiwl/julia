@@ -201,7 +201,7 @@ function strip_trailing_junk!(ci::CodeInfo, code::Vector{Any}, info::Vector{Any}
     nothing
 end
 
-struct DelayedTyp <: _AbstractLattice
+struct DelayedTyp <: AbstractLattice
     phi::NewSSAValue
 end
 

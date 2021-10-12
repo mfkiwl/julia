@@ -653,7 +653,7 @@ end
 function is_allconst(argtypes::Lattices)
     for a in argtypes
         a = widenconditional(a)
-        if !isConst(a) && !isconstType(widenconst(a)) && !isPartialStruct(a) && !isPartialOpaque(a)
+        if !isConst(a) #=&& COMBAK, of course !isconstType(widenconst(a))=# && !isPartialStruct(a) && !isPartialOpaque(a)
             return false
         end
     end
@@ -945,12 +945,12 @@ function abstract_apply(interp::AbstractInterpreter, argtypes::Lattices, sv::Inf
         infos′ = Vector{Union{Nothing, AbstractIterationInfo}}[]
         at = unwraptype(aargtypes[i])
         for ti in (splitunions ? uniontypes(at) : Any[at])
-            if !isvarargtype(ti)
+            if !isVararg(ti)
                 cti_info = precise_container_type(interp, itft, TypeLattice(ti), sv)
                 cti = cti_info[1]::Vector{Any}
                 info = cti_info[2]::Union{Nothing,AbstractIterationInfo}
             else
-                cti_info = precise_container_type(interp, itft, NativeType(unwrapva(ti)), sv)
+                cti_info = precise_container_type(interp, itft, NativeType(unwrapva(vararg(ti))), sv)
                 cti = cti_info[1]::Vector{Any}
                 info = cti_info[2]::Union{Nothing,AbstractIterationInfo}
                 # We can't represent a repeating sequence of the same types,
@@ -1000,7 +1000,7 @@ function abstract_apply(interp::AbstractInterpreter, argtypes::Lattices, sv::Inf
                 break
             end
         end
-        argtypesi = AbstractLattice[TypeLattice(a) for a in ct]
+        argtypesi = AbstractLattice[isvarargtype(a) ? mkVararg(a) : TypeLattice(a) for a in ct]
         call = abstract_call(interp, nothing, argtypesi, sv, max_methods)
         push!(retinfos, ApplyCallInfo(call.info, arginfo))
         res = tmerge(res, call.rt)
@@ -1050,8 +1050,8 @@ end
 function argtype_by_index(argtypes::Lattices, i::Int)
     n = length(argtypes)
     na = unwraptype(argtypes[n])
-    if isvarargtype(na)
-        return i >= n ? NativeType(unwrapva(na)) : argtypes[i]
+    if isVararg(na)
+        return i >= n ? NativeType(unwrapva(vararg(na))) : argtypes[i]
     else
         return i > n ? ⊥ : argtypes[i]
     end
@@ -1059,7 +1059,7 @@ end
 
 function argtype_tail(argtypes::Lattices, i::Int)
     n = length(argtypes)
-    if isvarargtype(unwraptype(argtypes[n])) && i > n
+    if isVararg(argtypes[n]) && i > n
         i = n
     end
     return argtypes[i:n]
@@ -1417,7 +1417,7 @@ end
         spsig = linfo.def.sig
         if isa(spsig, UnionAll)
             if !isempty(linfo.sparam_vals)
-                sparam_vals = Any[isa(v, Core.TypeofVararg) ? TypeVar(:N, Bottom, Any) :
+                sparam_vals = Any[isvarargtype(v) ? TypeVar(:N, Bottom, Any) :
                                   v for v in  linfo.sparam_vals]
                 T = ccall(:jl_instantiate_type_in_env, Any, (Any, Any, Ptr{Any}), T, spsig, sparam_vals)
                 isref && isreturn && T === Any && return Bottom # catch invalid return Ref{T} where T = Any
@@ -1735,7 +1735,8 @@ end
         fields = copy(rt.fields)
         haveconst = false
         for i in 1:length(fields)
-            a = widenreturn(TypeLattice(fields[i]), bestguess, nslots, slottypes, changes)
+            a = fields[i]
+            a = isVararg(a) ? a : widenreturn(TypeLattice(a), bestguess, nslots, slottypes, changes)
             if !haveconst && has_const_info(a)
                 # TODO: consider adding && const_prop_profitable(a) here?
                 haveconst = true

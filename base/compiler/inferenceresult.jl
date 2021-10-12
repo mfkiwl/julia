@@ -18,18 +18,18 @@ function matching_cache_argtypes(linfo::MethodInstance, given_argtypes::Lattices
     nargs::Int = linfo.def.nargs
     given_argtypes = AbstractLattice[widenconditional(a) for a in given_argtypes]
     isva = va_override || linfo.def.isva
-    if isva || isvarargtype(unwraptype(given_argtypes[end]))
+    if isva || isVararg(given_argtypes[end])
         isva_given_argtypes = Vector{Any}(undef, nargs)
         for i = 1:(nargs - isva)
             isva_given_argtypes[i] = argtype_by_index(given_argtypes, i)
         end
         if isva
-            if length(given_argtypes) < nargs && isvarargtype(unwraptype(given_argtypes[end]))
+            if length(given_argtypes) < nargs && isVararg(given_argtypes[end])
                 last = length(given_argtypes)
             else
                 last = nargs
             end
-            isva_given_argtypes[nargs] = TypeLattice(tuple_tfunc(anymap(unwraptype, given_argtypes[last:end])))
+            isva_given_argtypes[nargs] = tuple_tfunc(given_argtypes[last:end])
         end
         given_argtypes = isva_given_argtypes
     end
@@ -64,22 +64,22 @@ function most_general_argtypes(method::Union{Method, Nothing}, @nospecialize(spe
             if nargs > 1
                 linfo_argtypes = svec(Any[Any for i = 1:(nargs - 1)]..., Tuple.parameters[1])
             end
-            vargtype = Tuple
+            vargtype = NativeType(Tuple)
         else
             linfo_argtypes_length = length(linfo_argtypes)
             if nargs > linfo_argtypes_length
                 va = linfo_argtypes[linfo_argtypes_length]
                 if isvarargtype(va)
                     new_va = rewrap_unionall(unconstrain_vararg_length(va), specTypes)
-                    vargtype = Tuple{new_va}
+                    vargtype = NativeType(Tuple{new_va})
                 else
-                    vargtype = Tuple{}
+                    vargtype = NativeType(Tuple{})
                 end
             else
-                vargtype_elements = Any[]
+                vargtype_elements = AbstractLattice[]
                 for p in linfo_argtypes[nargs:linfo_argtypes_length]
-                    p = isvarargtype(p) ? unconstrain_vararg_length(p) : p
-                    push!(vargtype_elements, rewrap(p, specTypes))
+                    p = rewrap(isvarargtype(p) ? unconstrain_vararg_length(p) : p, specTypes)
+                    push!(vargtype_elements, isvarargtype(p) ? mkVararg(p) : NativeType(p))
                 end
                 for i in 1:length(vargtype_elements)
                     atyp = vargtype_elements[i]
@@ -93,7 +93,7 @@ function most_general_argtypes(method::Union{Method, Nothing}, @nospecialize(spe
                 vargtype = tuple_tfunc(vargtype_elements)
             end
         end
-        cache_argtypes[nargs] = TypeLattice(vargtype)
+        cache_argtypes[nargs] = vargtype
         nargs -= 1
     end
     # Now, we propagate type info from `linfo_argtypes` into `cache_argtypes`, improving some
