@@ -1344,7 +1344,7 @@ function apply_type_tfunc(@nospecialize(headtypetype), @nospecialize args...)
             push!(tparams, aival)
         elseif isPartialTypeVar(ai)
             canconst = false
-            push!(tparams, ai.partialtypevar.tv)
+            push!(tparams, partialtypevar(ai).tv)
         else
             uncertain = true
             # These blocks improve type info but make compilation a bit slower.

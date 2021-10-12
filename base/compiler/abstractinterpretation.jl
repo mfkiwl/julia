@@ -1188,7 +1188,7 @@ end
             if isConst(a2)
                 tv = constant(a2)
             elseif isPartialTypeVar(a2)
-                tv = a2.partialtypevar.tv
+                tv = partialtypevar(a2).tv
                 canconst = false
             else
                 return ⊤
@@ -1382,7 +1382,7 @@ function abstract_call(interp::AbstractInterpreter, fargs::Union{Nothing,Vector{
     ft = argtypes[1]
     f = singleton_type(ft)
     if isPartialOpaque(ft)
-        return abstract_call_opaque_closure(interp, ft.partialopaque, argtypes[2:end], sv)
+        return abstract_call_opaque_closure(interp, partialopaque(ft), argtypes[2:end], sv)
     elseif (uft = unwrap_unionall(unwraptype(ft)); isa(uft, DataType) && uft.name === typename(Core.OpaqueClosure))
         rt = NativeType(rewrap_unionall((uft::DataType).parameters[2], unwraptype(ft)))
         return CallMeta(rt, false)
@@ -1587,8 +1587,8 @@ end
                 if isPartialOpaque(t)
                     # Infer this now so that the specialization is available to
                     # optimization.
-                    callinfo = abstract_call_opaque_closure(interp, t.partialopaque,
-                        most_general_argtypes(t.partialopaque), sv)
+                    callinfo = abstract_call_opaque_closure(interp, partialopaque(t),
+                        most_general_argtypes(partialopaque(t)), sv)
                     sv.stmt_info[sv.currpc] = OpaqueClosureCreateInfo(callinfo)
                 end
             end

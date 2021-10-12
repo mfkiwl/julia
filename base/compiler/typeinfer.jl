@@ -302,7 +302,7 @@ function CodeInstance(result::InferenceResult, @nospecialize(inferred_result::An
             rettype_const = constant(result_type)
             const_flags = 0x2
         elseif isPartialOpaque(result_type)
-            rettype_const = result_type.partialopaque
+            rettype_const = partialopaque(result_type)
             const_flags = 0x2
         # TODO update me once we type `result.result::TypeLattice`
         elseif isconstType(result_type)

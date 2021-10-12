@@ -410,7 +410,7 @@ function _tmerge(@nospecialize(typea), @nospecialize(typeb))
         return anyconst ? PartialStruct(widenconst(typea), fields) : widenconst(typea)
     end
     if isPartialOpaque(typea) && isPartialOpaque(typeb) && widenconst(typea) === widenconst(typeb)
-        typea, typeb = typea.partialopaque, typeb.partialopaque
+        typea, typeb = partialopaque(typea), partialopaque(typeb)
         if !(typea.source === typeb.source &&
              typea.isva === typeb.isva &&
              typea.parent === typeb.parent)

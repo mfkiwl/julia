@@ -38,16 +38,8 @@ struct PartialTypeVarInfo
     tv::TypeVar
     PartialTypeVarInfo(tv::TypeVar) = new(tv)
 end
-const _TOP_PARTIALTYPEVAR_INFO = PartialTypeVarInfo(TypeVar(:⊤))
-
-const _TOP_PARTIALOPAQUE = let
-    f = x->x
-    f(42)
-    m = first(methods(f))
-    i = findfirst(x->isa(x,MethodInstance), m.specializations)
-    linfo = m.specializations[i]
-    PartialOpaque(Any, Tuple, true, linfo, m)
-end
+const Special = Union{PartialTypeVarInfo, PartialOpaque}
+const _TOP_SPECIAL = PartialTypeVarInfo(TypeVar(:⊤))
 
 """
     x::TypeLattice
@@ -118,22 +110,16 @@ a partial lattice whose height is infinite.
   - property widening: `widenconditional(x)`
 
 ---
-- `x.partialtypevar :: PartialTypeVarInfo` \\
-  Tracks an identity of `TypeVar` so that `x` can produce better inference for `UnionAll`
-  construction.
-  By default `x.partialtypevar` is initialized with `_TOP_PARTIALTYPEVAR_INFO` (no information).
+- `x.special :: Union{PartialTypeVarInfo, PartialOpaque}` \\
+  `x.special::PartialTypeVarInfo` tracks an identity of `TypeVar` so that `x` can produce
+  better inference for `UnionAll` construction.
+  `x.special::PartialOpaque` holds opaque closure information.
+  By default `x.special` is initialized with `_TOP_SPECIAL::PartialTypeVarInfo` (no information).
 
   See also:
-  - constructor: `PartialTypeVar(::TypeVar, lb_certain::Bool, ub_certain::Bool)`
-  - property query: `isPartialTypeVar(x)`
-
----
-- `x.partialopaque :: PartialOpaque` \\
-  Holds opaque closure information.
-
-  See also:
-  - constructor: `mkPartialOpaque`
-  - property query: `isPartialOpaque`
+  - constructor: `PartialTypeVar(::TypeVar, lb_certain::Bool, ub_certain::Bool)` / `mkPartialOpaque`
+  - property query: `isPartialTypeVar(x)` / `isPartialOpaque`
+  - property retrieval: `partialtypevar(x)` / `partialopaque(x)`
 
 ---
 - `x.causes :: IdSet{InferenceState}` \\
@@ -165,8 +151,7 @@ struct TypeLattice <: _AbstractLattice
     constant::Union{Nothing,Constant}
     fields::Fields
     conditional::AnyConditionalInfo
-    partialtypevar::PartialTypeVarInfo
-    partialopaque::PartialOpaque
+    special::Special
 
     # abstract interpretation specific attributes
     causes::Causes
@@ -178,8 +163,7 @@ struct TypeLattice <: _AbstractLattice
                          constant::Union{Nothing,Constant}  = nothing,
                          fields::Fields                     = _TOP_FIELDS,
                          conditional::AnyConditionalInfo    = _TOP_CONDITIONAL_INFO,
-                         partialtypevar::PartialTypeVarInfo = _TOP_PARTIALTYPEVAR_INFO,
-                         partialopaque::PartialOpaque       = _TOP_PARTIALOPAQUE,
+                         special::Special                   = _TOP_SPECIAL,
                          causes::Causes                     = _TOP_CAUSES,
                          maybeundef::Bool                   = false,
                          )
@@ -191,8 +175,7 @@ struct TypeLattice <: _AbstractLattice
                    constant,
                    fields,
                    conditional,
-                   partialtypevar,
-                   partialopaque,
+                   special,
                    causes,
                    maybeundef,
                    )
@@ -202,8 +185,7 @@ struct TypeLattice <: _AbstractLattice
                          constant::Union{Nothing,Constant}  = x.constant,
                          fields::Fields                     = x.fields,
                          conditional::AnyConditionalInfo    = x.conditional,
-                         partialtypevar::PartialTypeVarInfo = x.partialtypevar,
-                         partialopaque::PartialOpaque       = x.partialopaque,
+                         special::Special                   = x.special,
                          causes::Causes                     = x.causes,
                          maybeundef::Bool                   = x.maybeundef,
                          )
@@ -211,8 +193,7 @@ struct TypeLattice <: _AbstractLattice
                    constant,
                    fields,
                    conditional,
-                   partialtypevar,
-                   partialopaque,
+                   special,
                    causes,
                    maybeundef
                    )
@@ -289,16 +270,20 @@ function PartialTypeVar(
     # N.B.: Currently unused, but could be used to form something like `Constant`
     # if the bounds are pulled out of this `TypeVar`
     lb_certain::Bool, ub_certain::Bool)
-    partialtypevar = PartialTypeVarInfo(tv)
-    return TypeLattice(TypeVar; partialtypevar)
+    return TypeLattice(TypeVar; special = PartialTypeVarInfo(tv))
 end
-isPartialTypeVar(@nospecialize typ) = isa(typ, TypeLattice) && typ.partialtypevar !== _TOP_PARTIALTYPEVAR_INFO
+function isPartialTypeVar(@nospecialize typ)
+    isa(typ, TypeLattice) || return false
+    special = typ.special
+    return isa(special, PartialTypeVarInfo) && special !== _TOP_SPECIAL
+end
+@inline partialtypevar(typ::TypeLattice) = typ.special::PartialTypeVarInfo
 
 function mkPartialOpaque(@nospecialize(typ), @nospecialize(env), isva::Bool, parent::MethodInstance, source::Method)
-    partialopaque = PartialOpaque(typ, env, isva, parent, source)
-    return TypeLattice(typ; partialopaque)
+    return TypeLattice(typ; special = PartialOpaque(typ, env, isva, parent, source))
 end
-isPartialOpaque(@nospecialize typ) = isa(typ, TypeLattice) && typ.partialopaque !== _TOP_PARTIALOPAQUE
+isPartialOpaque(@nospecialize typ) = isa(typ, TypeLattice) && isa(typ.special, PartialOpaque)
+@inline partialopaque(typ::TypeLattice) = typ.special::PartialOpaque
 
 function LimitedAccuracy(x::TypeLattice, causes::Causes)
     @assert !isLimitedAccuracy(x) "nested LimitedAccuracy"
@@ -468,7 +453,7 @@ function ⊑(@nospecialize(a), @nospecialize(b))
     end
     if isPartialOpaque(a)
         if isPartialOpaque(b)
-            a, b = a.partialopaque, b.partialopaque
+            a, b = partialopaque(a), partialopaque(b)
             (a.parent === b.parent && a.source === b.source) || return false
             return (a.typ <: b.typ) && ⊑(a.env, b.env)
         end
@@ -527,11 +512,11 @@ function is_lattice_equal(@nospecialize(a), @nospecialize(b))
     end
     if isPartialOpaque(a)
         isPartialOpaque(b) || return false
-        a, b = a.partialopaque, b.partialopaque
+        a, b = partialopaque(a), partialopaque(b)
         a.typ === b.typ || return false
         a.source === b.source || return false
         a.parent === b.parent || return false
-        return is_lattice_equal(a.partialopaque.env, b.partialopaque.env)
+        return is_lattice_equal(a.env, b.env)
     end
     return a ⊑ b && b ⊑ a
 end
