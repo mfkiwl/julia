@@ -4,7 +4,7 @@
 # structs/constants #
 #####################
 
-# NOTE `_TOP_CAUSES` is defined in inferencestate.jl where `InferenceState` is defined
+# NOTE `_TOP_CAUSES` is defined in inferencestate.jl just after `InferenceState` is defined
 
 struct Constant
     val
