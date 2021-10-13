@@ -112,29 +112,9 @@ something(x::Any, y...) = x
 # compiler #
 ############
 
-# TODO remove me in the future, this is just to check the coverage of the overhaul
-abstract type AbstractLattice end
-const Lattices = Vector{AbstractLattice}
-macro latticeop(mode, def)
-    @assert is_function_def(def)
-    sig, body = def.args
-    if mode === :args || mode === :op
-        nospecs = Symbol[]
-        for arg in sig.args
-            if isexpr(arg, :macrocall) && arg.args[1] === Symbol("@nospecialize")
-                push!(nospecs, arg.args[3])
-            end
-        end
-        idx = findfirst(x->!isa(x, LineNumberNode), body.args)
-        for var in nospecs
-            insert!(body.args, idx, Expr(:(=), var, Expr(:(::), var, :AbstractLattice)))
-        end
-    end
-    if mode === :ret || mode === :op
-        sig = Expr(:(::), sig, :AbstractLattice)
-    end
-    return esc(Expr(def.head, sig, body))
-end
+include("compiler/typelattice.jl")
+
+const Lattices = Vector{TypeLattice}
 anymap(f::Function, a::Lattices) = Any[ f(a[i]) for i in 1:length(a) ]
 
 include("compiler/cicache.jl")
@@ -148,7 +128,6 @@ include("compiler/inferencestate.jl")
 
 include("compiler/typeutils.jl")
 include("compiler/typelimits.jl")
-include("compiler/typelattice.jl")
 include("compiler/tfuncs.jl")
 include("compiler/stmtinfo.jl")
 

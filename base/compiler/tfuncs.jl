@@ -974,7 +974,7 @@ function abstract_modifyfield!(interp::AbstractInterpreter, argtypes::Lattices, 
         v = TypeLattice(unwrapva(argtypes[5]))
         TF = TypeLattice(getfield_tfunc(o, f))
         push!(sv.ssavalue_uses[sv.currpc], sv.currpc) # temporarily disable `call_result_unused` check for this call
-        callinfo = abstract_call(interp, nothing, AbstractLattice[op, TF, v], sv, #=max_methods=# 1)
+        callinfo = abstract_call(interp, nothing, TypeLattice[op, TF, v], sv, #=max_methods=# 1)
         pop!(sv.ssavalue_uses[sv.currpc], sv.currpc)
         TF2 = tmeet(callinfo.rt, widenconst(TF))
         if TF2 === Bottom
@@ -1505,8 +1505,8 @@ add_tfunc(arrayref, 3, INT_INF, arrayref_tfunc, 20)
 add_tfunc(const_arrayref, 3, INT_INF, arrayref_tfunc, 20)
 add_tfunc(arrayset, 4, INT_INF, (@nospecialize(boundscheck), @nospecialize(a), @nospecialize(v), @nospecialize i...)->a, 20)
 
-@latticeop op function _opaque_closure_tfunc(@nospecialize(arg), @nospecialize(isva),
-        @nospecialize(lb), @nospecialize(ub), @nospecialize(source), env::Vector{Any},
+function _opaque_closure_tfunc(arg::TypeLattice, isva::TypeLattice,
+        lb::TypeLattice, ub::TypeLattice, source::TypeLattice, env::Vector{Any},
         linfo::MethodInstance)
 
     argt, argt_exact = instanceof_tfunc(arg)
@@ -1564,7 +1564,7 @@ function array_builtin_common_nothrow(argtypes::Array{Any,1}, first_idx_idx::Int
 end
 
 # Query whether the given builtin is guaranteed not to throw given the argtypes
-# FIXME, all nothrow tfuncs should work on `TypeLattice`s
+# TODO (lattice overhaul) all nothrow tfuncs should work on `TypeLattice`s
 _builtin_nothrow(@nospecialize(f), argtypes::Lattices, @nospecialize(rt)) =
     _builtin_nothrow(f, anymap(a->unwraptype(a), argtypes), unwraptype(rt))
 function _builtin_nothrow(@nospecialize(f), argtypes::Vector{Any}, @nospecialize(rt))
@@ -1626,7 +1626,7 @@ end
 
 function builtin_tfunction(interp::AbstractInterpreter, @nospecialize(f), argtypes::Lattices,
                            sv::Union{InferenceState,Nothing})
-    # FIXME, all inference tfuncs should work on `TypeLattice`s
+    # TODO (lattice overhaul) all inference tfuncs should work on `TypeLattice`s
     argtypes = anymap(a->unwraptype(a), argtypes)
     if f === tuple
         return tuple_tfunc(argtypes)
@@ -1772,7 +1772,7 @@ function return_type_tfunc(interp::AbstractInterpreter, argtypes::Lattices, sv::
                    (isconcretetype(aft) && !(aft <: Builtin))
                 af_argtype = isConst(tt) ? constant(tt) : (tt::DataType).parameters[1]
                 if isa(af_argtype, DataType) && af_argtype <: Tuple
-                    argtypes = AbstractLattice[TypeLattice(aft)]
+                    argtypes = TypeLattice[TypeLattice(aft)]
                     for ty in af_argtype.parameters
                         push!(argtypes, NativeType(ty))
                     end
@@ -1781,7 +1781,7 @@ function return_type_tfunc(interp::AbstractInterpreter, argtypes::Lattices, sv::
                     end
                     call = abstract_call(interp, nothing, argtypes, sv, -1)
                     info = verbose_stmt_info(interp) ? ReturnTypeCallInfo(call.info) : false
-                    rt = widenconditional(call.rt) # TODO remove this sort of "maybe" `widenconditional` calls
+                    rt = widenconditional(call.rt) # TODO (lattice overhaul) remove this sort of "maybe" `widenconditional` calls
                     if isConst(rt)
                         # output was computed to be constant
                         return CallMeta(Const(typeof(constant(rt))), info)

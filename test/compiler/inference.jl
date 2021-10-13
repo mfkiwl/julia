@@ -2300,12 +2300,12 @@ end
 # issue #28356
 # unit test to make sure countunionsplit overflows gracefully
 # we don't care what number is returned as long as it's large
-import Core.Compiler: unionsplitcost, AbstractLattice, NativeType
-@test unionsplitcost(AbstractLattice[NativeType(Union{Int32, Int64}) for i=1:80]) > 100000
-@test unionsplitcost(AbstractLattice[NativeType(Union{Int8, Int16, Int32, Int64})]) == 2
-@test unionsplitcost(AbstractLattice[NativeType(Union{Int8, Int16, Int32, Int64}), NativeType(Union{Int8, Int16, Int32, Int64}), NativeType(Int8)]) == 8
-@test unionsplitcost(AbstractLattice[NativeType(Union{Int8, Int16, Int32, Int64}), NativeType(Union{Int8, Int16, Int32}), NativeType(Int8)]) == 6
-@test unionsplitcost(AbstractLattice[NativeType(Union{Int8, Int16, Int32}), NativeType(Union{Int8, Int16, Int32, Int64}), NativeType(Int8)]) == 6
+import Core.Compiler: unionsplitcost, TypeLattice, NativeType
+@test unionsplitcost(TypeLattice[NativeType(Union{Int32, Int64}) for i=1:80]) > 100000
+@test unionsplitcost(TypeLattice[NativeType(Union{Int8, Int16, Int32, Int64})]) == 2
+@test unionsplitcost(TypeLattice[NativeType(Union{Int8, Int16, Int32, Int64}), NativeType(Union{Int8, Int16, Int32, Int64}), NativeType(Int8)]) == 8
+@test unionsplitcost(TypeLattice[NativeType(Union{Int8, Int16, Int32, Int64}), NativeType(Union{Int8, Int16, Int32}), NativeType(Int8)]) == 6
+@test unionsplitcost(TypeLattice[NativeType(Union{Int8, Int16, Int32}), NativeType(Union{Int8, Int16, Int32, Int64}), NativeType(Int8)]) == 6
 
 # make sure compiler doesn't hang in union splitting
 
@@ -3257,7 +3257,7 @@ let f() = Val(fieldnames(Complex{Int}))
 end
 
 @testset "switchtupleunion" begin
-    import Core.Compiler: AbstractLattice, NativeType, switchtupleunion
+    import Core.Compiler: TypeLattice, NativeType, switchtupleunion
 
     # signature tuple
     let
@@ -3275,18 +3275,18 @@ end
 
     # argtypes
     let
-        tunion = switchtupleunion(AbstractLattice[NativeType(Union{Int32,Int64}), Const(nothing)])
+        tunion = switchtupleunion(TypeLattice[NativeType(Union{Int32,Int64}), Const(nothing)])
         @test length(tunion) == 2
         @test Any[Int32, Const(nothing)] in tunion
         @test Any[Int64, Const(nothing)] in tunion
     end
     let
-        tunion = switchtupleunion(AbstractLattice[NativeType(Union{Int32,Int64}), NativeType(Union{Float32,Float64}), Const(nothing)])
+        tunion = switchtupleunion(TypeLattice[NativeType(Union{Int32,Int64}), NativeType(Union{Float32,Float64}), Const(nothing)])
         @test length(tunion) == 4
-        @test AbstractLattice[NativeType(Int32), NativeType(Float32), Const(nothing)] in tunion
-        @test AbstractLattice[NativeType(Int32), NativeType(Float64), Const(nothing)] in tunion
-        @test AbstractLattice[NativeType(Int64), NativeType(Float32), Const(nothing)] in tunion
-        @test AbstractLattice[NativeType(Int64), NativeType(Float64), Const(nothing)] in tunion
+        @test TypeLattice[NativeType(Int32), NativeType(Float32), Const(nothing)] in tunion
+        @test TypeLattice[NativeType(Int32), NativeType(Float64), Const(nothing)] in tunion
+        @test TypeLattice[NativeType(Int64), NativeType(Float32), Const(nothing)] in tunion
+        @test TypeLattice[NativeType(Int64), NativeType(Float64), Const(nothing)] in tunion
     end
 end
 

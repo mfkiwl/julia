@@ -90,7 +90,7 @@ mutable struct OptimizationState
         nslots = length(src.slotflags)
         slottypes = src.slottypes
         if slottypes === nothing
-            slottypes = AbstractLattice[ ⊤ for i = 1:nslots ]
+            slottypes = TypeLattice[ ⊤ for i = 1:nslots ]
         end
         stmt_info = Any[nothing for i = 1:nssavalues]
         # cache some useful state computations
@@ -218,7 +218,7 @@ function stmt_affects_purity(@nospecialize(stmt), ir)
 end
 
 # compute inlining cost and sideeffects
-function finish(interp::AbstractInterpreter, opt::OptimizationState, params::OptimizationParams, ir::IRCode, @nospecialize(result))
+function finish(interp::AbstractInterpreter, opt::OptimizationState, params::OptimizationParams, ir::IRCode, result::TypeLattice)
     (; src, linfo) = opt
     (; def, specTypes) = linfo
 
@@ -311,7 +311,7 @@ function finish(interp::AbstractInterpreter, opt::OptimizationState, params::Opt
 end
 
 # run the optimization work
-function optimize(interp::AbstractInterpreter, opt::OptimizationState, params::OptimizationParams, @nospecialize(result))
+function optimize(interp::AbstractInterpreter, opt::OptimizationState, params::OptimizationParams, result::TypeLattice)
     @timeit "optimizer" ir = run_passes(opt.src, opt)
     finish(interp, opt, params, ir, result)
 end
@@ -444,6 +444,7 @@ intrinsic_effect_free_if_nothrow(f) = f === Intrinsics.pointerref || is_pure_int
 # saturating sum (inputs are nonnegative), prevents overflow with typemax(Int) below
 plus_saturate(x::Int, y::Int) = max(x, y, x+y)
 
+# TODO (lattice overhaul) T::TypeLattice
 # known return type
 isknowntype(@nospecialize T) = (T === ⊥) || isConst(T) || isconcretetype(widenconst(T))
 

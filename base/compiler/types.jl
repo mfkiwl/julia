@@ -227,7 +227,7 @@ but `AbstractInterpreter` doesn't provide a specific interface for configuring i
 """
 bail_out_toplevel_call(::AbstractInterpreter, @nospecialize(callsig), sv#=::InferenceState=#) =
     return isa(sv.linfo.def, Module) && !isdispatchtuple(callsig)
-@latticeop args bail_out_call(::AbstractInterpreter, @nospecialize(rt), sv#=::InferenceState=#) =
+bail_out_call(::AbstractInterpreter, rt::TypeLattice, sv#=::InferenceState=#) =
     return rt === ⊤
-@latticeop args bail_out_apply(::AbstractInterpreter, @nospecialize(rt), sv#=::InferenceState=#) =
+bail_out_apply(::AbstractInterpreter, rt::TypeLattice, sv#=::InferenceState=#) =
     return rt === ⊤

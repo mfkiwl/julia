@@ -4,20 +4,19 @@
 # structs/constants #
 #####################
 
-const Causes = IdSet{InferenceState}
-const _TOP_CAUSES = Causes()
+# NOTE `_TOP_CAUSES` is defined in inferencestate.jl where `InferenceState` is defined
 
 struct Constant
     val
 end
 
-const Fields = Vector{Any} # TODO Vector{TypeLattice}
+const Fields = Vector{Any} # TODO (lattice overhaul) Vector{TypeLattice}
 const _TOP_FIELDS = Fields()
 
 struct ConditionalInfo
     var::SlotNumber
-    vtype    # TODO ::TypeLattice
-    elsetype # TODO ::TypeLattice
+    vtype    # TODO (lattice overhaul) ::TypeLattice
+    elsetype # TODO (lattice overhaul) ::TypeLattice
     function ConditionalInfo(var::SlotNumber, @nospecialize(vtype), @nospecialize(elsetype))
         return new(var, vtype, elsetype)
     end
@@ -25,8 +24,8 @@ end
 
 struct InterConditionalInfo
     slot::Int
-    vtype    # TODO ::TypeLattice
-    elsetype # TODO ::TypeLattice
+    vtype    # TODO (lattice overhaul) ::TypeLattice
+    elsetype # TODO (lattice overhaul) ::TypeLattice
     function InterConditionalInfo(slot::Int, @nospecialize(vtype), @nospecialize(elsetype))
         return new(slot, vtype, elsetype)
     end
@@ -131,6 +130,7 @@ a partial lattice whose height is infinite.
   - constructor: `LimitedAccuracy(::TypeLattice, ::IdSet{InferenceState})`
   - property query: `isLimitedAccuracy(x)`
   - property widening: `ignorelimited(x)`
+  - property retrieval: `causes(x)`
 
 ---
 - `x.maybeundef :: Bool` \\
@@ -145,7 +145,7 @@ a partial lattice whose height is infinite.
 
 ---
 """
-struct TypeLattice <: AbstractLattice
+struct TypeLattice
     typ::Type
 
     constant::Union{Nothing,Constant}
@@ -154,7 +154,7 @@ struct TypeLattice <: AbstractLattice
     special::Special
 
     # abstract interpretation specific attributes
-    causes::Causes
+    causes # ::IdSet{InferenceState}
 
     # optimization specific specific attributes
     maybeundef::Bool
@@ -164,7 +164,7 @@ struct TypeLattice <: AbstractLattice
                          fields::Fields                    = _TOP_FIELDS,
                          conditional::AnyConditionalInfo   = _TOP_CONDITIONAL_INFO,
                          special::Special                  = _TOP_SPECIAL,
-                         causes::Causes                    = _TOP_CAUSES,
+                         causes#=::IdSet{InferenceState}=# = _TOP_CAUSES,
                          maybeundef::Bool                  = false,
                          )
         return new(typ::Type,
@@ -182,7 +182,7 @@ struct TypeLattice <: AbstractLattice
                          fields::Fields                    = x.fields,
                          conditional::AnyConditionalInfo   = x.conditional,
                          special::Special                  = x.special,
-                         causes::Causes                    = x.causes,
+                         causes#=::IdSet{InferenceState}=# = causes(x),
                          maybeundef::Bool                  = x.maybeundef,
                          )
         return new(typ,
@@ -191,7 +191,7 @@ struct TypeLattice <: AbstractLattice
                    conditional,
                    special,
                    causes,
-                   maybeundef
+                   maybeundef,
                    )
     end
 end
@@ -200,16 +200,18 @@ NativeType(@nospecialize typ) = TypeLattice(typ::Type)
 # NOTE once we pack all extended lattice types into `TypeLattice`, we don't need this `unwraptype`:
 # - `unwraptype`: unwrap `NativeType` to native Julia type
 # - `widenconst`: unwrap any extended type lattice to native Julia type
-unwraptype(@nospecialize t) = (isa(t, TypeLattice) && t === NativeType(t.typ)) ? t.typ : t
+unwraptype(@nospecialize t) = t
+unwraptype(t::TypeLattice) = t === NativeType(t.typ) ? t.typ : t
 
 function Const(@nospecialize val)
     typ = isa(val, Type) ? Type{val} : typeof(val)
     constant = Constant(val)
     return TypeLattice(typ; constant)
 end
-isConst(@nospecialize typ) = isa(typ, TypeLattice) && typ.constant !== nothing
+isConst(@nospecialize typ) = false
+isConst(typ::TypeLattice) = typ.constant !== nothing
 # access to the `x.constant.val` field with improved type instability where `isConst(x)` holds
-# TODO once https://github.com/JuliaLang/julia/pull/41199 is merged,
+# TODO (lattice overhaul) once https://github.com/JuliaLang/julia/pull/41199 is merged,
 # all usages of this function can be simply replaced with `x.constant.val`
 @inline constant(x::TypeLattice) = (x.constant::Constant).val
 
@@ -223,9 +225,10 @@ function PartialStruct(@nospecialize(typ), fields::Fields)
     return TypeLattice(typ; fields)
 end
 istupletype(@nospecialize typ) = isa(typ, DataType) && typ.name.name === :Tuple
-isPartialStruct(@nospecialize typ) = isa(typ, TypeLattice) && !isempty(typ.fields)
+isPartialStruct(@nospecialize typ) = false
+isPartialStruct(typ::TypeLattice) = !isempty(typ.fields)
 
-# TODO do some assertions ?
+# TODO (lattice overhaul) do some assertions ?
 function Conditional(var::SlotNumber, @nospecialize(vtype), @nospecialize(elsetype))
     if vtype == ⊥
         constant = Constant(false)
@@ -248,12 +251,15 @@ function InterConditional(slot::Int, @nospecialize(vtype), @nospecialize(elsetyp
     conditional = InterConditionalInfo(slot, vtype, elsetype)
     return TypeLattice(Bool; constant, conditional)
 end
-isConditional(@nospecialize typ) = isa(typ, TypeLattice) && isa(typ.conditional, ConditionalInfo) && typ.conditional !== _TOP_CONDITIONAL_INFO
-isInterConditional(@nospecialize typ) = isa(typ, TypeLattice) && isa(typ.conditional, InterConditionalInfo)
-isAnyConditional(@nospecialize typ) = isa(typ, TypeLattice) && (isConditional(typ) || isInterConditional(typ))
+isConditional(@nospecialize typ) = false
+isConditional(typ::TypeLattice) = isa(typ.conditional, ConditionalInfo) && typ.conditional !== _TOP_CONDITIONAL_INFO
+isInterConditional(@nospecialize typ) = false
+isInterConditional(typ::TypeLattice) = isa(typ.conditional, InterConditionalInfo)
+isAnyConditional(@nospecialize typ) = false
+isAnyConditional(typ::TypeLattice) = isConditional(typ) || isInterConditional(typ)
 # access to the `x.conditional` field with improved type instability where
 # `isConditional(x)` or `isInterConditional(x)` hold
-# TODO once https://github.com/JuliaLang/julia/pull/41199 is merged,
+# TODO (lattice overhaul) once https://github.com/JuliaLang/julia/pull/41199 is merged,
 # all usages of this function can be simply replaced with `x.conditional`
 @inline conditional(x::TypeLattice) = x.conditional::ConditionalInfo
 @inline interconditional(x::TypeLattice) = x.conditional::InterConditionalInfo
@@ -268,8 +274,8 @@ function PartialTypeVar(
     lb_certain::Bool, ub_certain::Bool)
     return TypeLattice(TypeVar; special = PartialTypeVarInfo(tv))
 end
-function isPartialTypeVar(@nospecialize typ)
-    isa(typ, TypeLattice) || return false
+isPartialTypeVar(@nospecialize typ) = false
+function isPartialTypeVar(typ::TypeLattice)
     special = typ.special
     return isa(special, PartialTypeVarInfo) && special !== _TOP_SPECIAL
 end
@@ -278,44 +284,59 @@ end
 function mkPartialOpaque(@nospecialize(typ), @nospecialize(env), isva::Bool, parent::MethodInstance, source::Method)
     return TypeLattice(typ; special = PartialOpaque(typ, env, isva, parent, source))
 end
-isPartialOpaque(@nospecialize typ) = isa(typ, TypeLattice) && isa(typ.special, PartialOpaque)
+isPartialOpaque(@nospecialize typ) = false
+isPartialOpaque(typ::TypeLattice) = isa(typ.special, PartialOpaque)
 @inline partialopaque(typ::TypeLattice) = typ.special::PartialOpaque
 
 function mkVararg(vararg::TypeofVararg)
-    # COMBAK what `typ` should this have ?
+    # COMBAK (lattice overhaul) what `typ` should this have ?
     return TypeLattice(Any; special = vararg)
 end
-isVararg(@nospecialize typ) = isa(typ, TypeLattice) && isa(typ.special, TypeofVararg)
+isVararg(@nospecialize typ) = false
+isVararg(typ::TypeLattice) = isa(typ.special, TypeofVararg)
 @inline vararg(typ::TypeLattice) = typ.special::TypeofVararg
 
-function LimitedAccuracy(x::TypeLattice, causes::Causes)
+function LimitedAccuracy(x::TypeLattice, causes#=::IdSet{InferenceState}=#)
+    causes = causes::IdSet{InferenceState}
     @assert !isLimitedAccuracy(x) "nested LimitedAccuracy"
     @assert !isempty(causes) "malformed LimitedAccuracy"
     return TypeLattice(x; causes)
 end
-isLimitedAccuracy(@nospecialize typ) = isa(typ, TypeLattice) && !isempty(typ.causes)
+isLimitedAccuracy(@nospecialize typ) = false
+isLimitedAccuracy(typ::TypeLattice) = !isempty(causes(typ))
 ignorelimited(@nospecialize typ) = typ
 ignorelimited(typ::TypeLattice) = isLimitedAccuracy(typ) ? _ignorelimited(typ) : typ
 _ignorelimited(typ::TypeLattice) = TypeLattice(typ; causes = _TOP_CAUSES)
+@inline causes(typ::TypeLattice) = typ.causes::IdSet{InferenceState}
 
 MaybeUndef(x::TypeLattice) = TypeLattice(x; maybeundef = true)
 isMaybeUndef(@nospecialize typ) = isa(typ, TypeLattice) && typ.maybeundef
 ignoremaybeundef(@nospecialize typ) = typ
 ignoremaybeundef(typ::TypeLattice) = TypeLattice(typ; maybeundef = false)
 
+# The type of a variable load is either a value or an UndefVarError
+# (only used in abstractinterpret, doesn't appear in optimize)
+struct VarState
+    typ::TypeLattice
+    undef::Bool
+    VarState(typ::TypeLattice, undef::Bool) = new(typ, undef)
+end
+
+"""
+    const VarTable = Vector{VarState}
+
+The extended lattice that maps local variables to inferred type represented as `TypeLattice`.
+Each index corresponds to the `id` of `SlotNumber` which identifies each local variable.
+Note that `InferenceState` will maintain multiple `VarTable`s at each SSA statement
+to enable flow-sensitive analysis.
+"""
+const VarTable = Vector{VarState}
+
 struct StateUpdate
     var::SlotNumber
     vtype::VarState
     state::VarTable
     conditional::Bool
-end
-
-@inline @latticeop args function collect_limitations!(@nospecialize(typ), sv::InferenceState)
-    if isLimitedAccuracy(typ)
-        union!(sv.pclimitations, typ.causes)
-        return _ignorelimited(typ)
-    end
-    return typ
 end
 
 """
@@ -333,9 +354,10 @@ const NOT_FOUND = NotFound()
 
 # the types of `(src::CodeInfo).ssavaluetypes` after `InferenceState` construction and until `ir_to_codeinf!(src)` is called
 const SSAValueTypes = Vector{Any}
-const SSAValueType  = Union{NotFound,AbstractLattice} # element
+const SSAValueType  = Union{NotFound,TypeLattice} # element
 
-# allow comparison with unwrapped types (TODO remove me, this is just for prototyping)
+# allow comparison with unwrapped types
+# TODO (lattice overhaul) remove me, this is just for prototyping
 x::Type == y::TypeLattice = x === unwraptype(y)
 x::TypeLattice == y::Type = unwraptype(x) === y
 
@@ -367,7 +389,7 @@ end
 is_same_conditionals(a::ConditionalInfo, b::ConditionalInfo) = slot_id(a.var) == slot_id(b.var)
 is_same_conditionals(a::InterConditionalInfo, b::InterConditionalInfo) = a.slot == b.slot
 
-@latticeop args is_lattice_bool(@nospecialize(typ)) = typ !== ⊥ && typ ⊑ Bool
+is_lattice_bool(typ::TypeLattice) = typ !== ⊥ && typ ⊑ Bool
 
 function maybe_extract_const_bool(x::TypeLattice)
     if isConst(x)
@@ -388,7 +410,7 @@ function ⊑(@nospecialize(a), @nospecialize(b))
         if !isLimitedAccuracy(a)
             return false
         end
-        if b.causes ⊈ a.causes
+        if causes(b) ⊈ causes(a)
             return false
         end
         b = unwraptype(_ignorelimited(b))
@@ -480,7 +502,7 @@ end
 # Check if two lattice elements are partial order equivalent. This is basically
 # `a ⊑ b && b ⊑ a` but with extra performance optimizations.
 function is_lattice_equal(@nospecialize(a), @nospecialize(b))
-    # COMBAK this egal comparison is really senseless now
+    # TODO (lattice overhaul) this egal comparison is really senseless now
     a === b && return true
     if isPartialStruct(a)
         isPartialStruct(b) || return false

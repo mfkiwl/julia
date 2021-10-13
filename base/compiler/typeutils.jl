@@ -32,7 +32,7 @@ function hasuniquerep(@nospecialize t)
     return false
 end
 
-#= TODO @latticeop args =# function has_nontrivial_const_info(@nospecialize t)
+function has_nontrivial_const_info(@nospecialize t #=TODO (lattice overhaul) ::TypeLattice=#)
     isPartialStruct(t) && return true
     isa(t, PartialOpaque) && return true
     isConst(t) || return false
@@ -40,7 +40,7 @@ end
     return !isdefined(typeof(val), :instance) && !(isa(val, Type) && hasuniquerep(val))
 end
 
-@latticeop args function has_const_info(@nospecialize x)
+function has_const_info(x::TypeLattice)
     x = unwraptype(x)
     return (!isa(x, Type) && !isVararg(x)) || isType(x)
 end
@@ -169,7 +169,7 @@ function tvar_extent(@nospecialize t)
 end
 
 # N.B.: typename maps type equivalence classes to a single value
-@latticeop args function typename_static(@nospecialize(t))::AbstractLattice
+function typename_static(t::TypeLattice)
     isConditional(t) && return NativeType(Bool.name)
     isConst(t) && return _typename(constant(t))
     t = unwrap_unionall(widenconst(t))
@@ -284,7 +284,7 @@ unioncomplexity(u::UnionAll) = max(unioncomplexity(u.body)::Int, unioncomplexity
 unioncomplexity(t::TypeofVararg) = isdefined(t, :T) ? unioncomplexity(t.T)::Int : 0
 unioncomplexity(@nospecialize(x)) = isa(x, TypeLattice) && isVararg(x) ? unioncomplexity(vararg(x)) : 0
 
-@latticeop args function improvable_via_constant_propagation(@nospecialize t)
+function improvable_via_constant_propagation(t::TypeLattice)
     t = unwraptype(t)
     if isconcretetype(t) && t <: Tuple
         for p in t.parameters

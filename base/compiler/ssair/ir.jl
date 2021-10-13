@@ -153,7 +153,7 @@ end
 
 struct NewInstruction
     stmt::Any
-    type::AbstractLattice
+    type::TypeLattice
     info::Any
     # If nothing, copy the line from previous statement
     # in the insertion location
@@ -168,7 +168,7 @@ struct NewInstruction
 
     function NewInstruction(@nospecialize(stmt), @nospecialize(type), @nospecialize(info),
             line::Union{Int32, Nothing}, flag::UInt8, effect_free_computed::Bool)
-        if !isa(type, AbstractLattice)
+        if isa(type, Type)
             type = NativeType(type)
         end
         return new(stmt, type, info, line, flag, effect_free_computed)
@@ -194,7 +194,7 @@ struct InstructionStream
 end
 function InstructionStream(len::Int)
     insts = Array{Any}(undef, len)
-    types = Array{AbstractLattice}(undef, len)
+    types = Array{TypeLattice}(undef, len)
     info = Array{Any}(undef, len)
     fill!(info, nothing)
     lines = fill(Int32(0), len)

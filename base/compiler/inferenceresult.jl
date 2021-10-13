@@ -1,7 +1,7 @@
 # This file is a part of Julia. License is MIT: https://julialang.org/license
 
-@latticeop args function is_argtype_match(@nospecialize(given_argtype),
-                          @nospecialize(cache_argtype),
+function is_argtype_match(given_argtype::TypeLattice,
+                          cache_argtype::TypeLattice,
                           overridden_by_const::Bool)
     if isConst(given_argtype) || isPartialStruct(given_argtype) || isPartialOpaque(given_argtype)
         return is_lattice_equal(given_argtype, cache_argtype)
@@ -16,7 +16,7 @@ end
 function matching_cache_argtypes(linfo::MethodInstance, given_argtypes::Lattices, va_override::Bool)
     @assert isa(linfo.def, Method) # ensure the next line works
     nargs::Int = linfo.def.nargs
-    given_argtypes = AbstractLattice[widenconditional(a) for a in given_argtypes]
+    given_argtypes = TypeLattice[widenconditional(a) for a in given_argtypes]
     isva = va_override || linfo.def.isva
     if isva || isVararg(given_argtypes[end])
         isva_given_argtypes = Vector{Any}(undef, nargs)
@@ -76,7 +76,7 @@ function most_general_argtypes(method::Union{Method, Nothing}, @nospecialize(spe
                     vargtype = NativeType(Tuple{})
                 end
             else
-                vargtype_elements = AbstractLattice[]
+                vargtype_elements = TypeLattice[]
                 for p in linfo_argtypes[nargs:linfo_argtypes_length]
                     p = rewrap(isvarargtype(p) ? unconstrain_vararg_length(p) : p, specTypes)
                     push!(vargtype_elements, isvarargtype(p) ? mkVararg(p) : NativeType(p))

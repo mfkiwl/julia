@@ -12,6 +12,14 @@ const _REF_NAME = Ref.body.name
 # logic #
 #########
 
+@inline function collect_limitations!(typ::TypeLattice, sv::InferenceState)
+    if isLimitedAccuracy(typ)
+        union!(sv.pclimitations, causes(typ))
+        return _ignorelimited(typ)
+    end
+    return typ
+end
+
 # See if the inference result of the current statement's result value might affect
 # the final answer for the method (aside from optimization potential and exceptions).
 # To do that, we need to check both for slot assignment and SSA usage.
@@ -35,7 +43,7 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(f),
     (; valid_worlds, applicable, info) = matches
     update_valid_age!(sv, valid_worlds)
     napplicable = length(applicable)
-    rettype::AbstractLattice = ⊥
+    rettype::TypeLattice = ⊥
     edges = MethodInstance[]
     conditionals = nothing # keeps refinement information of call argument types when the return type is boolean
     seen = 0               # number of signatures actually inferred
@@ -119,8 +127,8 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(f),
         rettype = tmerge(rettype, this_rt)
         if this_conditional !== ⊥ && is_lattice_bool(rettype) && fargs !== nothing
             if conditionals === nothing
-                conditionals = AbstractLattice[⊥ for _ in 1:length(argtypes)],
-                               AbstractLattice[⊥ for _ in 1:length(argtypes)]
+                conditionals = TypeLattice[⊥ for _ in 1:length(argtypes)],
+                               TypeLattice[⊥ for _ in 1:length(argtypes)]
             end
             condval = maybe_extract_const_bool(this_conditional)
             for i = 1:length(argtypes)
@@ -313,10 +321,9 @@ function find_matching_methods(argtypes::Lattices, @nospecialize(atype), method_
     end
 end
 
-function add_call_backedges!(interp::AbstractInterpreter, @nospecialize(rettype), edges::Vector{MethodInstance},
+function add_call_backedges!(interp::AbstractInterpreter, rettype::TypeLattice, edges::Vector{MethodInstance},
                              matches::Union{MethodMatches,UnionSplitMethodMatches}, @nospecialize(atype),
                              sv::InferenceState)
-    rettype = rettype::AbstractLattice
     # for `NativeInterpreter`, we don't add backedges when a new method couldn't refine (widen) this type
     rettype === ⊤ && return
     for edge in edges
@@ -504,11 +511,11 @@ end
 
 # keeps result and context information of abstract method call, will be used by succeeding constant-propagation
 struct MethodCallResult
-    rt # ::TypeLattice
+    rt::TypeLattice
     edgecycle::Bool
     edgelimited::Bool
     edge::Union{Nothing,MethodInstance}
-    function MethodCallResult(@nospecialize(rt),
+    function MethodCallResult(rt::TypeLattice,
                               edgecycle::Bool,
                               edgelimited::Bool,
                               edge::Union{Nothing,MethodInstance})
@@ -610,14 +617,12 @@ function const_prop_entry_heuristic(interp::AbstractInterpreter, result::MethodC
     return false
 end
 
+# TODO (lattice overhaul):
 # check if this return type is improvable (i.e. whether it's possible that with
 # more information, we might get a more precise type)
-@latticeop args function is_improvable(@nospecialize(rtype))
-    if isa(rtype, TypeLattice)
-        # Could always be improved to Const unless we're already at Bottom
-        return rtype !== ⊥ && !isConst(rtype)
-    end
-    return false
+function is_improvable(rtype::TypeLattice)
+    # Could always be improved to Const unless we're already at Bottom
+    return rtype !== ⊥ && !isConst(rtype)
 end
 
 # see if propagating constants may be worthwhile
@@ -631,12 +636,13 @@ function const_prop_argument_heuristic(interp::AbstractInterpreter, argtypes::La
     return false
 end
 
-function is_const_prop_profitable_arg(@nospecialize(arg))
+function is_const_prop_profitable_arg(arg::TypeLattice)
     # have new information from argtypes that wasn't available from the signature
     if isPartialStruct(arg)
         for b in arg.fields
             isconstType(b) && return true
-            is_const_prop_profitable_arg(b) && return true
+            # TODO (lattice overhaul): fix me, once we type `PartialStruct(typ, ::Vector{TypeLattice})`
+            (!isConst(b) || is_const_prop_profitable_arg(b)) && return true
         end
     end
     isPartialOpaque(arg) && return true
@@ -646,14 +652,14 @@ function is_const_prop_profitable_arg(@nospecialize(arg))
     return isa(val, Symbol) || isa(val, Type) || (!isa(val, String) && !ismutable(val))
 end
 
-@latticeop args function const_prop_rettype_heuristic(interp::AbstractInterpreter, @nospecialize(rettype))
+function const_prop_rettype_heuristic(interp::AbstractInterpreter, rettype::TypeLattice)
     return improvable_via_constant_propagation(rettype)
 end
 
 function is_allconst(argtypes::Lattices)
     for a in argtypes
         a = widenconditional(a)
-        if !isConst(a) #=&& COMBAK, of course !isconstType(widenconst(a))=# && !isPartialStruct(a) && !isPartialOpaque(a)
+        if !isConst(a) #=&& TODO (lattice overhaul): !isconstType(widenconst(a))=# && !isPartialStruct(a) && !isPartialOpaque(a)
             return false
         end
     end
@@ -760,14 +766,14 @@ function ssa_def_slot(@nospecialize(arg), sv::InferenceState)
     return arg
 end
 
-# TODO work on AbstractLattice rather than on native types (`precise_container_type` and `abstract_iteration`)
+# TODO (lattice overhaul): work on TypeLattice rather than on native types (`precise_container_type` and `abstract_iteration`)
 
 # `typ` is the inferred type for expression `arg`.
 # if the expression constructs a container (e.g. `svec(x,y,z)`),
 # refine its type to an array of element types.
 # Union of Tuples of the same length is converted to Tuple of Unions.
 # returns an array of types
-@latticeop args function precise_container_type(interp::AbstractInterpreter, @nospecialize(itft), @nospecialize(typ), sv::InferenceState)
+function precise_container_type(interp::AbstractInterpreter, itft::TypeLattice, typ::TypeLattice, sv::InferenceState)
     if isPartialStruct(typ) && typ.typ.name === Tuple.name
         return typ.fields, nothing
     end
@@ -834,15 +840,15 @@ end
 end
 
 # simulate iteration protocol on container type up to fixpoint
-@latticeop args function abstract_iteration(interp::AbstractInterpreter, @nospecialize(itft), @nospecialize(itertype), sv::InferenceState)
+function abstract_iteration(interp::AbstractInterpreter, itft::TypeLattice, itertype::TypeLattice, sv::InferenceState)
     if isConst(itft)
         iteratef = constant(itft)
     else
         return Any[Vararg{Any}], nothing
     end
     @assert !isvarargtype(widenconst(itertype))
-    call = abstract_call_known(interp, iteratef, nothing, AbstractLattice[itft, itertype], sv)
-    stateordonet::AbstractLattice = call.rt
+    call = abstract_call_known(interp, iteratef, nothing, TypeLattice[itft, itertype], sv)
+    stateordonet::TypeLattice = call.rt
     info = call.info
     # Return Bottom if this is not an iterator.
     # WARNING: Changes to the iteration protocol must be reflected here,
@@ -875,7 +881,7 @@ end
         valtype = getfield_tfunc(unwraptype(stateordonet), Const(1))
         push!(ret, valtype)
         statetype = nstatetype
-        call = abstract_call_known(interp, iteratef, nothing, AbstractLattice[Const(iteratef), itertype, TypeLattice(statetype)], sv)
+        call = abstract_call_known(interp, iteratef, nothing, TypeLattice[Const(iteratef), itertype, TypeLattice(statetype)], sv)
         stateordonet = call.rt
         stateordonet_widened = widenconst(stateordonet)
         push!(calls, call)
@@ -910,7 +916,7 @@ end
         end
         valtype = unwraptype(tmerge(valtype, nounion.parameters[1]))
         statetype = unwraptype(tmerge(statetype, nounion.parameters[2]))
-        stateordonet = abstract_call_known(interp, iteratef, nothing, AbstractLattice[Const(iteratef), itertype, TypeLattice(statetype)], sv).rt
+        stateordonet = abstract_call_known(interp, iteratef, nothing, TypeLattice[Const(iteratef), itertype, TypeLattice(statetype)], sv).rt
         stateordonet_widened = widenconst(stateordonet)
     end
     if valtype !== Bottom
@@ -935,7 +941,7 @@ function abstract_apply(interp::AbstractInterpreter, argtypes::Lattices, sv::Inf
             return CallMeta(⊤, false)
         end
     end
-    res::AbstractLattice = ⊥
+    res::TypeLattice = ⊥
     nargs = length(aargtypes)
     splitunions = 1 < unionsplitcost(aargtypes) <= InferenceParams(interp).MAX_APPLY_UNION_ENUM
     ctypes = [Any[aft]]
@@ -1000,7 +1006,7 @@ function abstract_apply(interp::AbstractInterpreter, argtypes::Lattices, sv::Inf
                 break
             end
         end
-        argtypesi = AbstractLattice[isvarargtype(a) ? mkVararg(a) : TypeLattice(a) for a in ct]
+        argtypesi = TypeLattice[isvarargtype(a) ? mkVararg(a) : TypeLattice(a) for a in ct]
         call = abstract_call(interp, nothing, argtypesi, sv, max_methods)
         push!(retinfos, ApplyCallInfo(call.info, arginfo))
         res = tmerge(res, call.rt)
@@ -1065,7 +1071,7 @@ function argtype_tail(argtypes::Lattices, i::Int)
     return argtypes[i:n]
 end
 
-@latticeop ret function abstract_call_builtin(interp::AbstractInterpreter, f::Builtin, fargs::Union{Nothing,Vector{Any}},
+function abstract_call_builtin(interp::AbstractInterpreter, f::Builtin, fargs::Union{Nothing,Vector{Any}},
         argtypes::Lattices, sv::InferenceState, max_methods::Int)
     @nospecialize f
     la = length(argtypes)
@@ -1164,10 +1170,10 @@ end
             end
         end
     end
-    return isa(rt, TypeVar) ? NativeType(rt.ub) : TypeLattice(rt)
+    return TypeLattice(rt)
 end
 
-@latticeop ret function abstract_call_unionall(argtypes::Lattices)
+function abstract_call_unionall(argtypes::Lattices)
     if length(argtypes) == 3
         canconst = true
         a3 = argtypes[3]
@@ -1296,7 +1302,7 @@ function abstract_call_known(interp::AbstractInterpreter, @nospecialize(f),
         aty = argtypes[2]
         if isConditional(aty)
             cnd = conditional(aty)
-            call = abstract_call_gf_by_type(interp, f, fargs, AbstractLattice[Const(f), NativeType(Bool)], Tuple{typeof(f), Bool}, sv) # make sure we've inferred `!(::Bool)`
+            call = abstract_call_gf_by_type(interp, f, fargs, TypeLattice[Const(f), NativeType(Bool)], Tuple{typeof(f), Bool}, sv) # make sure we've inferred `!(::Bool)`
             return CallMeta(Conditional(cnd.var, cnd.elsetype, cnd.vtype), call.info)
         end
     elseif la == 3 && istopfunction(f, :!==)
@@ -1317,7 +1323,7 @@ function abstract_call_known(interp::AbstractInterpreter, @nospecialize(f),
         else
             fargs = nothing
         end
-        argtypes = AbstractLattice[NativeType(typeof(<:)), argtypes[3], argtypes[2]]
+        argtypes = TypeLattice[NativeType(typeof(<:)), argtypes[3], argtypes[2]]
         return CallMeta(abstract_call_known(interp, <:, fargs, argtypes, sv).rt, false)
     elseif la == 2 &&
            (a2 = argtypes[2]; isConst(a2)) && (svecval = constant(a2); isa(svecval, SimpleVector)) &&
@@ -1398,7 +1404,7 @@ function abstract_call(interp::AbstractInterpreter, fargs::Union{Nothing,Vector{
     return abstract_call_known(interp, f, fargs, argtypes, sv, max_methods)
 end
 
-@latticeop ret function sp_type_rewrap(@nospecialize(T), linfo::MethodInstance, isreturn::Bool)
+function sp_type_rewrap(@nospecialize(T), linfo::MethodInstance, isreturn::Bool)
     isref = false
     if T === Bottom
         return ⊥
@@ -1440,7 +1446,7 @@ end
 function abstract_eval_cfunction(interp::AbstractInterpreter, e::Expr, vtypes::VarTable, sv::InferenceState)
     f = abstract_eval_value(interp, e.args[2], vtypes, sv)
     # rt = sp_type_rewrap(e.args[3], sv.linfo, true)
-    at = AbstractLattice[ sp_type_rewrap(argt, sv.linfo, false) for argt in e.args[4]::SimpleVector ]
+    at = TypeLattice[ sp_type_rewrap(argt, sv.linfo, false) for argt in e.args[4]::SimpleVector ]
     pushfirst!(at, f)
     # this may be the wrong world for the call,
     # but some of the result is likely to be valid anyways
@@ -1449,7 +1455,7 @@ function abstract_eval_cfunction(interp::AbstractInterpreter, e::Expr, vtypes::V
     nothing
 end
 
-@latticeop ret function abstract_eval_value_expr(interp::AbstractInterpreter, e::Expr, vtypes::VarTable, sv::InferenceState)
+function abstract_eval_value_expr(interp::AbstractInterpreter, e::Expr, vtypes::VarTable, sv::InferenceState)
     if e.head === :static_parameter
         n = e.args[1]::Int
         t = ⊤
@@ -1464,7 +1470,7 @@ end
     end
 end
 
-@latticeop ret function abstract_eval_special_value(interp::AbstractInterpreter, @nospecialize(e), vtypes::VarTable, sv::InferenceState)
+function abstract_eval_special_value(interp::AbstractInterpreter, @nospecialize(e), vtypes::VarTable, sv::InferenceState)
     if isa(e, QuoteNode)
         return Const((e::QuoteNode).value)
     elseif isa(e, SSAValue)
@@ -1478,7 +1484,7 @@ end
     return Const(e)
 end
 
-@latticeop ret function abstract_eval_value(interp::AbstractInterpreter, @nospecialize(e), vtypes::VarTable, sv::InferenceState)
+function abstract_eval_value(interp::AbstractInterpreter, @nospecialize(e), vtypes::VarTable, sv::InferenceState)
     if isa(e, Expr)
         return abstract_eval_value_expr(interp, e, vtypes, sv)
     else
@@ -1500,7 +1506,7 @@ function collect_argtypes(interp::AbstractInterpreter, ea::Vector{Any}, vtypes::
     return argtypes
 end
 
-@latticeop ret function abstract_eval_statement(interp::AbstractInterpreter, @nospecialize(e), vtypes::VarTable, sv::InferenceState)
+function abstract_eval_statement(interp::AbstractInterpreter, @nospecialize(e), vtypes::VarTable, sv::InferenceState)
     if !isa(e, Expr)
         if isa(e, PhiNode)
             rt = ⊥
@@ -1662,14 +1668,14 @@ end
     return t
 end
 
-@latticeop ret function abstract_eval_global(M::Module, s::Symbol)
+function abstract_eval_global(M::Module, s::Symbol)
     if isdefined(M,s) && isconst(M,s)
         return Const(getfield(M,s))
     end
     return ⊤
 end
 
-@latticeop ret function abstract_eval_ssavalue(s::SSAValue, src::CodeInfo)
+function abstract_eval_ssavalue(s::SSAValue, src::CodeInfo)
     typ = (src.ssavaluetypes::SSAValueTypes)[s.id]::SSAValueType
     if typ === NOT_FOUND
         return ⊥
@@ -1677,7 +1683,7 @@ end
     return typ
 end
 
-@latticeop op function widenreturn(@nospecialize(rt), @nospecialize(bestguess), nslots::Int, slottypes::Lattices, changes::VarTable)
+function widenreturn(rt::TypeLattice, bestguess::TypeLattice, nslots::Int, slottypes::Lattices, changes::VarTable)
     if !(bestguess ⊑ Bool) || unwraptype(bestguess) === Bool
         # give up inter-procedural constraint back-propagation
         # when tmerge would widen the result anyways (as an optimization)
@@ -1978,7 +1984,7 @@ function typeinf_local(interp::AbstractInterpreter, frame::InferenceState)
     nothing
 end
 
-@latticeop args function conditional_changes(changes::VarTable, @nospecialize(typ), var::SlotNumber)
+function conditional_changes(changes::VarTable, typ::TypeLattice, var::SlotNumber)
     oldtyp = changes[slot_id(var)].typ
     # approximate test for `typ ∩ oldtyp` being better than `oldtyp`
     # since we probably formed these types with `typesubstract`, the comparison is likely simple
@@ -1986,14 +1992,14 @@ end
     if typ′ ⊑ oldtyp′
         # typ is better unlimited, but we may still need to compute the tmeet with the limit "causes" since we ignored those in the comparison
         if isLimitedAccuracy(oldtyp)
-            typ = LimitedAccuracy(typ′, oldtyp.causes)
+            typ = LimitedAccuracy(typ′, causes(oldtyp))
         end
         return StateUpdate(var, VarState(typ, false), changes, true)
     end
     return changes
 end
 
-@latticeop op function bool_rt_to_conditional(@nospecialize(rt), slottypes::Lattices, state::VarTable, slot_id::Int)
+function bool_rt_to_conditional(rt::TypeLattice, slottypes::Lattices, state::VarTable, slot_id::Int)
     old = slottypes[slot_id]
     new = widenconditional(state[slot_id].typ) # avoid nested conditional
     if new ⊑ old && !(old ⊑ new)

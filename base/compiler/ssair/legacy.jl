@@ -5,7 +5,7 @@ function inflate_ir(ci::CodeInfo, linfo::MethodInstance)
     if ci.inferred
         argtypes, _ = matching_cache_argtypes(linfo, nothing, false)
     else
-        argtypes = AbstractLattice[ ⊤ for i = 1:length(ci.slotflags) ]
+        argtypes = TypeLattice[ ⊤ for i = 1:length(ci.slotflags) ]
     end
     return inflate_ir(ci, sptypes, argtypes)
 end
@@ -33,9 +33,9 @@ function inflate_ir(ci::CodeInfo, sptypes::Lattices, argtypes::Lattices)
     ssavaluetypes = let ssavaluetypes = ci.ssavaluetypes
         if isa(ssavaluetypes, SSAValueTypes)
             # NOTE thes `ssavaluetypes` have been widened
-            AbstractLattice[ NativeType(ssavaluetypes[i]) for i in 1:length(ssavaluetypes) ]
+            TypeLattice[ NativeType(ssavaluetypes[i]) for i in 1:length(ssavaluetypes) ]
         else
-            AbstractLattice[ ⊤ for _ in 1:(ssavaluetypes::Int) ]
+            TypeLattice[ ⊤ for _ in 1:(ssavaluetypes::Int) ]
         end
     end
     stmts = InstructionStream(code, ssavaluetypes, Any[nothing for i = 1:nstmts], copy(ci.codelocs), copy(ci.ssaflags))
@@ -76,4 +76,4 @@ function replace_code_newstyle!(ci::CodeInfo, ir::IRCode, nargs::Int)
 end
 
 # used by some tests
-inflate_ir(ci::CodeInfo) = inflate_ir(ci, Lattices(), AbstractLattice[ ⊤ for i = 1:length(ci.slotflags) ])
+inflate_ir(ci::CodeInfo) = inflate_ir(ci, Lattices(), TypeLattice[ ⊤ for i = 1:length(ci.slotflags) ])

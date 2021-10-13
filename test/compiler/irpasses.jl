@@ -180,7 +180,7 @@ let m = Meta.@lower 1 + 1
     src.ssaflags = fill(Int32(0), nstmts)
     ir = Core.Compiler.inflate_ir(src,
         Core.Compiler.Lattices(),
-        Core.Compiler.AbstractLattice[Core.Compiler.NativeType(Any), Core.Compiler.NativeType(Any)])
+        Core.Compiler.TypeLattice[Core.Compiler.NativeType(Any), Core.Compiler.NativeType(Any)])
     @test Core.Compiler.verify_ir(ir) === nothing
     ir = @test_nowarn Core.Compiler.getfield_elim_pass!(ir)
     @test Core.Compiler.verify_ir(ir) === nothing

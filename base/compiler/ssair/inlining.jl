@@ -620,7 +620,7 @@ function rewrite_apply_exprargs!(ir::IRCode, todo::Vector{Pair{Int, Any}}, idx::
 
     flag = ir.stmts[idx][:flag]
     new_argexprs = Any[argexprs[arg_start]]
-    new_atypes = AbstractLattice[atypes[arg_start]]
+    new_atypes = TypeLattice[atypes[arg_start]]
     # loop over original arguments and flatten any known iterators
     for i in (arg_start+1):length(argexprs)
         def = argexprs[i]
@@ -629,7 +629,7 @@ function rewrite_apply_exprargs!(ir::IRCode, todo::Vector{Pair{Int, Any}}, idx::
         if thisarginfo === nothing
             if isPartialStruct(def_type)
                 # def_type.typ <: Tuple is assumed
-                def_atypes = AbstractLattice[TypeLattice(t) for t in def_type.fields]
+                def_atypes = TypeLattice[TypeLattice(t) for t in def_type.fields]
             else
                 def_atypes = Lattices()
                 if isConst(def_type) # && isa(constant(def_type), Union{Tuple, SimpleVector}) is implied
@@ -863,7 +863,7 @@ function handle_single_case!(ir::IRCode, stmt::Expr, idx::Int, @nospecialize(cas
     nothing
 end
 
-@latticeop args function is_valid_type_for_apply_rewrite(@nospecialize(typ), params::OptimizationParams)
+function is_valid_type_for_apply_rewrite(typ::TypeLattice, params::OptimizationParams)
     if isConst(typ)
         val = constant(typ)
         if isa(val, SimpleVector)
@@ -1403,7 +1403,7 @@ function late_inline_special_case!(ir::IRCode, sig::Signature, idx::Int, stmt::E
     elseif isinlining && length(atypes) == 3 && istopfunction(f, :(>:))
         # special-case inliner for issupertype
         # that works, even though inference generally avoids inferring the `>:` Method
-        if isConst(typ) && _builtin_nothrow(<:, AbstractLattice[atypes[3], atypes[2]], typ)
+        if isConst(typ) && _builtin_nothrow(<:, TypeLattice[atypes[3], atypes[2]], typ)
             ir[SSAValue(idx)] = quoted(constant(typ))
             return true
         end

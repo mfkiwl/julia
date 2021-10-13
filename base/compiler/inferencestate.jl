@@ -2,24 +2,6 @@
 
 const LineNum = Int
 
-# The type of a variable load is either a value or an UndefVarError
-# (only used in abstractinterpret, doesn't appear in optimize)
-struct VarState
-    typ::AbstractLattice
-    undef::Bool
-    @latticeop args VarState(@nospecialize(typ), undef::Bool) = new(typ, undef)
-end
-
-"""
-    const VarTable = Vector{VarState}
-
-The extended lattice that maps local variables to inferred type represented as `AbstractLattice`.
-Each index corresponds to the `id` of `SlotNumber` which identifies each local variable.
-Note that `InferenceState` will maintain multiple `VarTable`s at each SSA statement
-to enable flow-sensitive analysis.
-"""
-const VarTable = Vector{VarState}
-
 mutable struct InferenceState
     params::InferenceParams
     result::InferenceResult # remember where to put the result
@@ -40,7 +22,7 @@ mutable struct InferenceState
     stmt_edges::Vector{Union{Nothing, Vector{Any}}}
     stmt_info::Vector{Any}
     # return type
-    bestguess::AbstractLattice
+    bestguess::TypeLattice
     # current active instruction pointers
     ip::BitSet
     pc´´::LineNum
@@ -135,6 +117,8 @@ mutable struct InferenceState
         return frame
     end
 end
+
+const _TOP_CAUSES = IdSet{InferenceState}() # NOTE used by `TypeLattice` constructors
 
 function compute_trycatch(code::Vector{Any}, ip::BitSet)
     # The goal initially is to record the frame like this for the state at exit:
@@ -320,7 +304,7 @@ function sptypes_from_meth_instance(linfo::MethodInstance)
         end
         sp[i] = TypeLattice(ty)
     end
-    return collect(AbstractLattice, sp)
+    return collect(TypeLattice, sp)
 end
 
 _topmod(sv::InferenceState) = _topmod(sv.mod)
@@ -334,7 +318,7 @@ end
 
 update_valid_age!(edge::InferenceState, sv::InferenceState) = update_valid_age!(sv, edge.valid_worlds)
 
-@latticeop args function record_ssa_assign(ssa_id::Int, @nospecialize(new), frame::InferenceState)
+function record_ssa_assign(ssa_id::Int, new::TypeLattice, frame::InferenceState)
     ssavaluetypes = frame.src.ssavaluetypes::SSAValueTypes
     old = ssavaluetypes[ssa_id]::SSAValueType
     if old === NOT_FOUND || !(new ⊑ old)

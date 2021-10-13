@@ -230,7 +230,7 @@ argextype(@nospecialize(x), state) = argextype(x, state.src, state.sptypes, stat
 
 const empty_slottypes = Lattices()
 
-@latticeop ret function argextype(@nospecialize(x), src, sptypes::Lattices, slottypes::Lattices = empty_slottypes)
+function argextype(@nospecialize(x), src, sptypes::Lattices, slottypes::Lattices = empty_slottypes)
     if isa(x, Expr)
         if x.head === :static_parameter
             return sptypes[x.args[1]::Int]
@@ -263,7 +263,7 @@ const empty_slottypes = Lattices()
     end
 end
 
-@latticeop args function singleton_type(@nospecialize(ft))
+function singleton_type(ft::TypeLattice)
     if isConst(ft)
         return constant(ft)
     end

@@ -19,7 +19,7 @@ being used for this purpose alone.
 module Timings
 
 using Core.Compiler: -, +, :, Vector, length, first, empty!, push!, pop!, @inline,
-    @inbounds, copy, backtrace, AbstractLattice, Lattices
+    @inbounds, copy, backtrace, TypeLattice, Lattices
 
 # What we record for any given frame we infer during type inference.
 struct InferenceFrameInfo
@@ -83,7 +83,7 @@ function reset_timings()
     empty!(_timings)
     push!(_timings, Timing(
         # The MethodInstance for ROOT(), and default empty values for other fields.
-        InferenceFrameInfo(ROOTmi, 0x0, Lattices(), AbstractLattice[Core.Compiler.Const(ROOT)], 1),
+        InferenceFrameInfo(ROOTmi, 0x0, Lattices(), TypeLattice[Core.Compiler.Const(ROOT)], 1),
         _time_ns()))
     return nothing
 end
@@ -250,7 +250,7 @@ function _typeinf(interp::AbstractInterpreter, frame::InferenceState)
     for (caller, _, _) in results
         opt = caller.src
         if opt isa OptimizationState # implies `may_optimize(interp) === true`
-            result_type = caller.result
+            result_type = caller.result::TypeLattice
             @assert !isLimitedAccuracy(result_type)
             optimize(interp, opt, OptimizationParams(interp), result_type)
             if opt.const_api
@@ -287,7 +287,7 @@ end
 function CodeInstance(result::InferenceResult, @nospecialize(inferred_result::Any),
                       valid_worlds::WorldRange)
     local const_flags::Int32
-    result_type = result.result
+    result_type = result.result::TypeLattice
     @assert !isLimitedAccuracy(result_type)
     if isa(inferred_result, Constant)
         # use constant calling convention
@@ -304,7 +304,7 @@ function CodeInstance(result::InferenceResult, @nospecialize(inferred_result::An
         elseif isPartialOpaque(result_type)
             rettype_const = partialopaque(result_type)
             const_flags = 0x2
-        # TODO update me once we type `result.result::TypeLattice`
+        # TODO (lattice overhaul) update me once we type `result.result::TypeLattice`
         elseif isconstType(result_type)
             rettype_const = result_type.parameters[1]
             const_flags = 0x2
@@ -396,23 +396,23 @@ function cache_result!(interp::AbstractInterpreter, result::InferenceResult)
     nothing
 end
 
-function cycle_fix_limited(@nospecialize(typ), sv::InferenceState)
+function cycle_fix_limited(typ::TypeLattice, sv::InferenceState)
     if isLimitedAccuracy(typ)
         if sv.parent === nothing
             # when part of a cycle, we might have unintentionally introduced a limit marker
             @assert !isempty(sv.callers_in_cycle)
             return _ignorelimited(typ)
         end
-        causes = copy(typ.causes)
-        delete!(causes, sv)
+        fixedcauses = copy(causes(typ))
+        delete!(fixedcauses, sv)
         for caller in sv.callers_in_cycle
-            delete!(causes, caller)
+            delete!(fixedcauses, caller)
         end
-        if isempty(causes)
+        if isempty(fixedcauses)
             return _ignorelimited(typ)
         end
-        if length(causes) != length(typ.causes)
-            return LimitedAccuracy(_ignorelimited(typ), causes)
+        if length(fixedcauses) != length(causes(typ))
+            return LimitedAccuracy(_ignorelimited(typ), fixedcauses)
         end
     end
     return typ
@@ -444,7 +444,9 @@ function finish(me::InferenceState, interp::AbstractInterpreter)
     if !limited_ret
         gt = me.src.ssavaluetypes::SSAValueTypes
         for j = 1:length(gt)
-            gt[j] = gtj = cycle_fix_limited(gt[j]::SSAValueType, me)
+            gt[j] = gtj = let typ = gt[j]::SSAValueType
+                typ === NOT_FOUND ? typ : cycle_fix_limited(typ, me)
+            end
             if isLimitedAccuracy(gtj) && me.parent !== nothing
                 limited_src = true
                 break
@@ -509,7 +511,7 @@ end
 function widen_all_consts!(src::CodeInfo)
     ssavaluetypes = src.ssavaluetypes::SSAValueTypes
     for i = 1:length(ssavaluetypes)
-        ssavaluetypes[i] = widenconst(ssavaluetypes[i]::AbstractLattice)
+        ssavaluetypes[i] = widenconst(ssavaluetypes[i]::TypeLattice)
     end
 
     for i = 1:length(src.code)
@@ -583,7 +585,7 @@ function record_slot_assign!(sv::InferenceState)
             lhs = expr.args[1]
             rhs = expr.args[2]
             if isa(lhs, SlotNumber)
-                vt = widenconst(ssavaluetypes[i]::AbstractLattice)
+                vt = widenconst(ssavaluetypes[i]::TypeLattice)
                 if vt !== Bottom
                     id = slot_id(lhs)
                     otherTy = slottypes[id]
@@ -673,7 +675,7 @@ function type_annotate!(sv::InferenceState, run_optimizer::Bool)
                 changemap[oldidx] = -1
                 continue
             else
-                # TODO how to deal with this ?
+                # TODO (lattice overhaul) how to deal with this ?
                 body[i] = Const(expr) # annotate that this statement actually is dead
             end
         end
@@ -972,7 +974,7 @@ _return_type(@nospecialize(f), @nospecialize(t), world) = _return_type(NativeInt
 function _return_type(interp::AbstractInterpreter, @nospecialize(f), @nospecialize(t))
     rt = Union{}
     if isa(f, Builtin)
-        argtypes = AbstractLattice[NativeType(ty) for ty in t.parameters]
+        argtypes = TypeLattice[NativeType(ty) for ty in t.parameters]
         rt = builtin_tfunction(interp, f, argtypes, nothing)
         if isa(rt, TypeVar)
             rt = rt.ub

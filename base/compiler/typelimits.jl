@@ -281,7 +281,7 @@ function issimpleenoughtype(@nospecialize t)
            unioncomplexity(t) <= MAX_TYPEUNION_COMPLEXITY
 end
 
-# TODO tmerge(typea::TypeLattice, typeb::TypeLattice)
+# TODO (lattice overhaul) tmerge(typea::TypeLattice, typeb::TypeLattice)
 function tmerge(@nospecialize(typea), @nospecialize(typeb))
     typea = unwraptype(typea)
     typeb = unwraptype(typeb)
@@ -307,18 +307,18 @@ function _tmerge(@nospecialize(typea), @nospecialize(typeb))
     # represent the precise intersection of causes and don't attempt to
     # enumerate some of these cases where we could
     if isLimitedAccuracy(typea) && isLimitedAccuracy(typeb)
-        if typea.causes ⊆ typeb.causes
-            causes = typeb.causes
-        elseif typeb.causes ⊆ typea.causes
-            causes = typea.causes
+        if causes(typea) ⊆ causes(typeb)
+            newcauses = causes(typeb)
+        elseif causes(typeb) ⊆ causes(typea)
+            newcauses = causes(typea)
         else
-            causes = union!(copy(typea.causes), typeb.causes)
+            newcauses = union!(copy(causes(typea)), causes(typeb))
         end
-        return LimitedAccuracy(tmerge(_ignorelimited(typea), _ignorelimited(typeb)), causes)
+        return LimitedAccuracy(tmerge(_ignorelimited(typea), _ignorelimited(typeb)), newcauses)
     elseif isLimitedAccuracy(typea)
-        return LimitedAccuracy(tmerge(_ignorelimited(typea), typeb), typea.causes)
+        return LimitedAccuracy(tmerge(_ignorelimited(typea), typeb), causes(typea))
     elseif isLimitedAccuracy(typeb)
-        return LimitedAccuracy(tmerge(typea, _ignorelimited(typeb)), typeb.causes)
+        return LimitedAccuracy(tmerge(typea, _ignorelimited(typeb)), causes(typeb))
     end
     # type-lattice for MaybeUndef wrapper
     if isMaybeUndef(typea) || isMaybeUndef(typeb)
