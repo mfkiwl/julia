@@ -109,7 +109,9 @@ function sprint(f::Function, args...; context=nothing, sizehint::Integer=0)
     if context isa Tuple
         f(IOContext(s, context...), args...)
     elseif context !== nothing
-        f(IOContext(s, context), args...)
+        ioc = IOContext(s, context)
+        # Add an explicit displaysize entry, see #42649
+        f(IOContext(ioc, :displaysize=>displaysize(context)), args...)
     else
         f(s, args...)
     end
