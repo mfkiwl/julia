@@ -3545,3 +3545,31 @@ Foo42097(f::F, args) where {F} = Foo42097{F}()
 Foo42097(A) = Foo42097(Base.inferencebarrier(+), Base.inferencebarrier(1)...)
 foo42097() = Foo42097([1]...)
 @test foo42097() isa Foo42097{typeof(+)}
+
+# eliminate unbound `TypeVar`s on `argtypes` construction
+let
+    a0(a1, a2, a3, a4, a5, a6, a7, a8, a9...) = nothing
+    method = only(methods(a0))
+    unbound = TypeVar(:Unbound, Integer)
+    specTypes = Tuple{typeof(a0),
+        Bound,                  # TypeVar  => Integer
+        unbound,                # TypeVar  => Integer (special invalid case)
+        Type{Bound},            # DataType => Type{Bound} where Bound<:Integer
+        Type{unbound},          # DataType => Type
+        Vector{Some{Bound}},    # DataType => Vector{Some{Bound}} where Bound<:Integer
+        Vector{Some{unbound}},  # DataType => Array
+        Union{Nothing,Bound},   # Union    => Union{Nothing,Bound} where Bound<:Integer
+        Union{Nothing,unbound}, # Union    => Any
+        Bound, unbound,         # Vararg   => Tuple{Integer,Integer}
+        } where Bound<:Integer
+    argtypes = Core.Compiler.most_general_argtypes(method, specTypes, true)
+    @test argtypes[2] == Integer
+    @test argtypes[3] == Integer
+    @test argtypes[4] == Type{Bound} where Bound<:Integer
+    @test argtypes[5] == Type
+    @test argtypes[6] == Vector{Some{Bound}} where Bound<:Integer
+    @test argtypes[7] == Array
+    @test argtypes[8] == Union{Nothing,Bound} where Bound<:Integer
+    @test argtypes[9] == Any
+    @test argtypes[10] == Tuple{Integer, Integer}
+end

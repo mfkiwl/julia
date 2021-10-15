@@ -50,7 +50,7 @@ end
 function most_general_argtypes(method::Union{Method, Nothing}, @nospecialize(specTypes),
     isva::Bool, withfirst::Bool = true)
     toplevel = method === nothing
-    linfo_argtypes = Any[unwrap_unionall(specTypes).parameters...]
+    linfo_argtypes = Any[(unwrap_unionall(specTypes)::DataType).parameters...]
     nargs::Int = toplevel ? 0 : method.nargs
     if !withfirst
         # For opaque closure, the closure environment is processed elsewhere
@@ -79,7 +79,7 @@ function most_general_argtypes(method::Union{Method, Nothing}, @nospecialize(spe
                 vargtype_elements = Any[]
                 for p in linfo_argtypes[nargs:linfo_argtypes_length]
                     p = isvarargtype(p) ? unconstrain_vararg_length(p) : p
-                    push!(vargtype_elements, rewrap(p, specTypes))
+                    push!(vargtype_elements, elim_free_typevars(rewrap(p, specTypes)))
                 end
                 for i in 1:length(vargtype_elements)
                     atyp = vargtype_elements[i]
@@ -118,7 +118,7 @@ function most_general_argtypes(method::Union{Method, Nothing}, @nospecialize(spe
             elseif isconstType(atyp)
                 atyp = Const(atyp.parameters[1])
             else
-                atyp = rewrap(atyp, specTypes)
+                atyp = elim_free_typevars(rewrap(atyp, specTypes))
             end
             i == n && (lastatype = atyp)
             cache_argtypes[i] = atyp
@@ -130,6 +130,46 @@ function most_general_argtypes(method::Union{Method, Nothing}, @nospecialize(spe
         @assert nargs == 0 "invalid specialization of method" # wrong number of arguments
     end
     cache_argtypes
+end
+
+# eliminate free `TypeVar`s in order to make the life much easier down the road
+# the replacement might not be very correct, but unbound `TypeVar`s here are really invalid anyway
+# TODO allow external `AbstractInterpreter` to hook in here and allow it to report them
+function elim_free_typevars(@nospecialize t)
+    has_free_typevars(t) || return t
+    t, changed = elim_free_typevars(t, find_free_typevars(t))
+    @assert changed && !has_free_typevars(t)
+    return t
+end
+function elim_free_typevars(@nospecialize(t), freetvs::Vector{Any})
+    if isa(t, TypeVar)
+        if t in freetvs
+            return t.ub, true
+        else
+            return t, false
+        end
+    elseif isa(t, DataType)
+        for p in t.parameters
+            if last(elim_free_typevars(p, freetvs))
+                return t.name.wrapper, true
+            end
+        end
+        return t, false
+    elseif isa(t, UnionAll)
+        return Any, true
+    elseif isa(t, Union)
+        changed = false
+        changed |= last(elim_free_typevars(t.a, freetvs))
+        changed |= last(elim_free_typevars(t.b, freetvs))
+        return changed ? (Any, true) : (t, false)
+    elseif isvarargtype(t)
+        changed = false
+        isdefined(t, :T) && (changed |= last(elim_free_typevars(t.T, freetvs)))
+        isdefined(t, :N) && (changed |= last(elim_free_typevars(t.N, freetvs)))
+        return changed ? (Vararg, true) : (t, false)
+    else
+        return t, false
+    end
 end
 
 function matching_cache_argtypes(linfo::MethodInstance, ::Nothing, va_override::Bool)
